@@ -20,6 +20,7 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 <div class="layout"><div>
 <section><h2>回測設定</h2><div class="form">
 <div><label>資料來源</label><select id="provider"><option value="demo">合成示範資料</option><option value="ccxt">CEX / CCXT</option><option value="hyperliquid">DEX / Hyperliquid Perp</option><option value="yfinance">全球股票 / Yahoo</option><option value="csv">本地 CSV</option></select></div>
+<div class="span warning" id="market-demo-info" hidden><strong>目前為公開 Demo，尚不能回測真實加密貨幣或股票。</strong> 使用合成 K 線驗證 Pine 策略編輯與回測流程。CEX／DEX／股票搜尋已實作在完整版，但這個公開網站沒有啟用，不能將此頁的報酬當成真實市場回測結果。</div>
 <div><label>交易所 ID</label><input id="exchange" list="exchangeIDs" placeholder="binanceusdm" value="binanceusdm"><datalist id="exchangeIDs"></datalist></div>
 <div class="span"><label>交易商品 / 股票代碼</label><input id="symbol" value="BTC/USDT:USDT" placeholder="BTC/USDT:USDT、BTC、2330.TW、AAPL"></div>
 <div class="span" id="catalog-picker">
@@ -34,12 +35,12 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 <div><label>結束日（不含）</label><input id="end" type="date" value="2025-01-01"></div>
 <div><label>K 線週期</label><select id="timeframe"><option>1d</option><option>1h</option><option>4h</option><option>15m</option><option>5m</option><option>1m</option><option>1w</option></select></div>
 <div><label>市場類型</label><select id="product"><option value="perp">永續合約</option><option value="future">交割合約</option><option value="spot">現貨</option><option value="equity">股票</option></select></div>
-<div><label>策略</label><select id="strategy"><option value="sma_cross">SMA 均線交叉</option><option value="buy_hold">買入持有</option><option value="rsi_revert">RSI 均值回歸</option><option value="breakout">Donchian 突破</option><option value="pine">自訂 Pine Script（相容子集）</option></select></div>
-<div class="span" id="pine-editor" hidden>
-<label>貼上 TradingView Pine 策略（v5/v6 常用語法）</label>
+<div><label>策略</label><select id="strategy"><option value="sma_cross">SMA 均線交叉</option><option value="buy_hold">買入持有</option><option value="rsi_revert">RSI 均值回歸</option><option value="breakout">Donchian 突破</option><option value="pine" selected>自訂 Pine Script（相容子集）</option></select></div>
+<div class="span" id="pine-editor">
+<label><strong>自訂 Pine Script 策略編輯器</strong>（可直接修改、貼上或匯入）</label>
 <textarea id="pineCode" rows="13" spellcheck="false" style="width:100%;min-height:260px;background:#101a2a;color:#edf5ff;border:1px solid #3b4e69;border-radius:8px;padding:12px;font:12px/1.55 ui-monospace,monospace"></textarea>
 <div class="actions"><input type="file" id="pineFile" accept=".pine,.txt,text/plain" aria-label="匯入 .pine 檔"><button type="button" class="secondary" id="pineExample">載入均線策略範例</button></div>
-<small>安全相容子集：input、ta.sma/ema/rsi/highest/lowest、crossover/crossunder、if、strategy.entry/close。尚未支援 strategy.exit 停損限價、request.security、陣列或 TradingView 完整撮合語意。公開版每次最多 700 根 K 線。</small>
+<small>預設開啟 Pine 編輯器；若要使用 SMA、RSI、突破等內建策略，可在上方「策略」切換。安全相容子集：input、ta.sma/ema/rsi/highest/lowest、crossover/crossunder、if、strategy.entry/close。尚未支援 strategy.exit 停損限價、request.security、陣列或 TradingView 完整撮合語意。公開版每次最多 700 根 K 線。</small>
 </div>
 <div><label>最大槓桿</label><input id="leverage" type="number" min="1" max="125" step="1" value="1"></div>
 <div><label>起始資金</label><input id="capital" type="number" min="1" value="10000"></div>
@@ -168,6 +169,7 @@ async function initialize(){
       for(const option of Array.from($('provider').options)){ if(option.value!=='demo') option.remove(); }
       $('provider').value='demo';
       $('provider').disabled=true;
+      $('market-demo-info').hidden=false;
       $('symbol').value='SYNTHETIC';
       $('schedule').hidden=true;
       $('jobs').closest('section').hidden=true;
@@ -176,10 +178,10 @@ async function initialize(){
         $(id).closest('div').hidden=true;
       }
       document.querySelector('header small').textContent='v0.1 · Public Demo · Synthetic Data';
-      document.querySelector('.sub').textContent='公開測試：合成行情 + 可貼上自訂 Pine 策略（受限語法）。正式版可搜尋 CEX、DEX 與全球股票代號。';
+      document.querySelector('.sub').textContent='可立即貼上 Pine Script 並執行示範回測。提醒：此網站目前使用合成行情，非真實市場數據。';
       document.querySelector('section:nth-child(2) small').textContent=
         '公開版只使用合成行情，允許安全 Pine Script 相容子集；不提供真實交易所資料、Python/JS 程式或排程。Pine 最多 700 根 K 線，結果不儲存。';
-      $('status').textContent='公開示範模式已啟用：選擇日期、週期與策略後即可執行。';
+      $('status').textContent='Pine Script 編輯器已預設開啟。修改程式碼後按「執行回測」。';
     }else{
       loadJobs();
     }

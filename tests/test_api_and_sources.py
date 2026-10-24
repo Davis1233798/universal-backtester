@@ -129,3 +129,13 @@ def test_public_demo_is_stateless_and_rejects_unsafe_operations(tmp_path, monkey
         assert client.get(route).status_code == 403
     assert client.post('/api/jobs',json=payload).status_code == 403
     assert client.patch('/api/jobs/random?active=true').status_code == 403
+
+
+def test_pine_editor_visible_by_default_in_web_ui():
+    client=TestClient(app)
+    html=client.get('/').text
+    assert 'id="pine-editor">' in html
+    assert '<option value="pine" selected>' in html
+    assert 'id="pineCode"' in html
+    assert 'id="market-demo-info" hidden' in html
+    assert "document.querySelector('.sub').textContent" in html
