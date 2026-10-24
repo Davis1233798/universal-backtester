@@ -1,0 +1,10 @@
+//@version=6
+strategy("Sample Pine crossover", overlay=true)
+fast = input.int(10, "Fast")
+slow = input.int(30, "Slow")
+fastLine = ta.sma(close, fast)
+slowLine = ta.sma(close, slow)
+if ta.crossover(fastLine, slowLine)
+    strategy.entry("Long", strategy.long)
+if ta.crossunder(fastLine, slowLine)
+    strategy.close("Long")

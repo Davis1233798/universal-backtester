@@ -22,12 +22,25 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 <div><label>資料來源</label><select id="provider"><option value="demo">合成示範資料</option><option value="ccxt">CEX / CCXT</option><option value="hyperliquid">DEX / Hyperliquid Perp</option><option value="yfinance">全球股票 / Yahoo</option><option value="csv">本地 CSV</option></select></div>
 <div><label>交易所 ID</label><input id="exchange" placeholder="binanceusdm" value="binanceusdm"></div>
 <div class="span"><label>交易商品 / 股票代碼</label><input id="symbol" value="BTC/USDT:USDT" placeholder="BTC/USDT:USDT、BTC、2330.TW、AAPL"></div>
+<div class="span" id="catalog-picker">
+<label>搜尋交易所商品／股票（完整版）</label>
+<div class="actions" style="margin-top:0"><input id="marketQuery" value="BTC" placeholder="BTC、SOL、TSMC、2330.TW、AAPL">
+<button type="button" id="marketLookup">搜尋</button></div>
+<select id="marketResults" size="5" style="margin-top:8px" aria-label="搜尋結果"></select>
+<small id="marketStatus">實際可選商品以資料供應商當前掛牌／搜尋結果為準；不保證有可下載歷史 K 線。</small>
+</div>
 <div class="span"><label>CSV 路徑（僅 csv 模式）</label><input id="csv" placeholder="/app/data/my-candles.csv"></div>
 <div><label>起始日（含）</label><input id="start" type="date" value="2024-01-01"></div>
 <div><label>結束日（不含）</label><input id="end" type="date" value="2025-01-01"></div>
 <div><label>K 線週期</label><select id="timeframe"><option>1d</option><option>1h</option><option>4h</option><option>15m</option><option>5m</option><option>1m</option><option>1w</option></select></div>
 <div><label>市場類型</label><select id="product"><option value="perp">永續合約</option><option value="future">交割合約</option><option value="spot">現貨</option><option value="equity">股票</option></select></div>
-<div><label>策略</label><select id="strategy"><option value="sma_cross">SMA 均線交叉</option><option value="buy_hold">買入持有</option><option value="rsi_revert">RSI 均值回歸</option><option value="breakout">Donchian 突破</option></select></div>
+<div><label>策略</label><select id="strategy"><option value="sma_cross">SMA 均線交叉</option><option value="buy_hold">買入持有</option><option value="rsi_revert">RSI 均值回歸</option><option value="breakout">Donchian 突破</option><option value="pine">自訂 Pine Script（相容子集）</option></select></div>
+<div class="span" id="pine-editor" hidden>
+<label>貼上 TradingView Pine 策略（v5/v6 常用語法）</label>
+<textarea id="pineCode" rows="13" spellcheck="false" style="width:100%;min-height:260px;background:#101a2a;color:#edf5ff;border:1px solid #3b4e69;border-radius:8px;padding:12px;font:12px/1.55 ui-monospace,monospace"></textarea>
+<div class="actions"><input type="file" id="pineFile" accept=".pine,.txt,text/plain" aria-label="匯入 .pine 檔"><button type="button" class="secondary" id="pineExample">載入均線策略範例</button></div>
+<small>安全相容子集：input、ta.sma/ema/rsi/highest/lowest、crossover/crossunder、if、strategy.entry/close。尚未支援 strategy.exit 停損限價、request.security、陣列或 TradingView 完整撮合語意。公開版每次最多 700 根 K 線。</small>
+</div>
 <div><label>最大槓桿</label><input id="leverage" type="number" min="1" max="125" step="1" value="1"></div>
 <div><label>起始資金</label><input id="capital" type="number" min="1" value="10000"></div>
 <div><label>單邊手續費（bps）</label><input id="fee" type="number" min="0" step="0.1" value="6"></div>
@@ -51,7 +64,7 @@ function config(){ const p=$('provider').value, product=$('product').value;
       start:$('start').value,end:$('end').value,csv_path:$('csv').value,market_type:$('marketType').value,include_funding:$('funding').checked},
     risk:{product_type:product,market:product==='equity'?'stock':'crypto',leverage:Number($('leverage').value),
       initial_cash:Number($('capital').value),fee_bps:Number($('fee').value),slippage_bps:Number($('slippage').value)},
-    strategy:{type:'builtin',name:$('strategy').value,options:{fast:10,slow:30}},refresh:$('refresh').checked};
+    strategy:$('strategy').value==='pine'?{type:'pine',code:$('pineCode').value}:{type:'builtin',name:$('strategy').value,options:{fast:10,slow:30}},refresh:$('refresh').checked};
 }
 $('provider').addEventListener('change',()=>{
   const p=$('provider').value;
@@ -94,6 +107,54 @@ async function loadJobs(){try{const jobs=await api('/api/jobs');const el=$('jobs
   btn.style.width='auto';btn.style.marginLeft='12px';btn.textContent=j.active?'暫停':'啟用';btn.className='secondary';btn.onclick=async()=>{await api(`/api/jobs/${j.id}?active=${!j.active}`,{method:'PATCH'});loadJobs()};
   line.textContent=`${j.id.slice(0,8)} · ${j.config.data?.symbol||''} · ${j.last_run_day||'尚未執行'} · ${j.last_result||''}`;line.appendChild(btn);return line}));
  }catch(e){$('jobs').textContent=e.message}}
+const PINE_SAMPLE = `//@version=6
+strategy("MA Cross - Universal Backtester", overlay=true)
+fast = input.int(10, "Fast")
+slow = input.int(30, "Slow")
+fastMA = ta.sma(close, fast)
+slowMA = ta.sma(close, slow)
+if ta.crossover(fastMA, slowMA)
+    strategy.entry("Long", strategy.long)
+if ta.crossunder(fastMA, slowMA)
+    strategy.close("Long")`;
+$('pineCode').value=PINE_SAMPLE;
+$('pineExample').onclick=()=>{$('pineCode').value=PINE_SAMPLE;};
+$('pineFile').onchange=async e=>{
+ const file=e.target.files?.[0];
+ if(!file)return;
+ if(file.size>12000){$('status').textContent='Pine 檔案不可超過 12 KB';return;}
+ $('pineCode').value=await file.text();
+ $('strategy').value='pine';togglePine();
+};
+function togglePine(){$('pine-editor').hidden=$('strategy').value!=='pine';}
+$('strategy').addEventListener('change',togglePine);togglePine();
+function syncCatalog(){
+  const p=$('provider').value;
+  $('catalog-picker').hidden=!['ccxt','hyperliquid','yfinance'].includes(p);
+}
+$('provider').addEventListener('change',syncCatalog);
+syncCatalog();
+$('marketLookup').onclick=async()=>{
+  const p=$('provider').value;
+  const q=$('marketQuery').value.trim();
+  if(!q){$('marketStatus').textContent='請輸入代號或公司名稱';return;}
+  $('marketStatus').textContent='正在搜尋供應商商品清單…';
+  $('marketLookup').disabled=true;
+  try{
+    const params=new URLSearchParams({provider:p,q,exchange:$('exchange').value,market_type:$('marketType').value,limit:'50'});
+    const res=await api('/api/markets?'+params.toString());
+    const sel=$('marketResults');sel.replaceChildren(...(res.items||[]).map(x=>{
+      const item=document.createElement('option');
+      item.value=x.symbol;
+      item.textContent=x.symbol+' · '+(x.name||x.base||x.type||'')+' · '+(x.exchange||'');
+      return item;
+    }));
+    if(sel.options.length){sel.selectedIndex=0;$('symbol').value=sel.value;}
+    $('marketStatus').textContent='符合條件 '+res.matched_count+' 筆；'+res.limitation;
+  }catch(e){$('marketStatus').textContent='搜尋失敗：'+e.message;}
+  finally{$('marketLookup').disabled=false;}
+};
+$('marketResults').onchange=()=>{if($('marketResults').value)$('symbol').value=$('marketResults').value;};
 $('reload').onclick=loadJobs;
 async function initialize(){
   try{
@@ -105,13 +166,14 @@ async function initialize(){
       $('symbol').value='SYNTHETIC';
       $('schedule').hidden=true;
       $('jobs').closest('section').hidden=true;
+      $('catalog-picker').hidden=true;
       for(const id of ['exchange','csv','funding','refresh','marketType']){
         $(id).closest('div').hidden=true;
       }
       document.querySelector('header small').textContent='v0.1 · Public Demo · Synthetic Data';
-      document.querySelector('.sub').textContent='公開測試版：在伺服器執行真正的回測引擎，但行情是人工合成，非交易所真實價格。';
+      document.querySelector('.sub').textContent='公開測試：合成行情 + 可貼上自訂 Pine 策略（受限語法）。正式版可搜尋 CEX、DEX 與全球股票代號。';
       document.querySelector('section:nth-child(2) small').textContent=
-        '公開版本不提供外部交易所、檔案、外部策略程式與每日排程。單次最多 1,500 根 K 線，結果不儲存。';
+        '公開版只使用合成行情，允許安全 Pine Script 相容子集；不提供真實交易所資料、Python/JS 程式或排程。Pine 最多 700 根 K 線，結果不儲存。';
       $('status').textContent='公開示範模式已啟用：選擇日期、週期與策略後即可執行。';
     }else{
       loadJobs();

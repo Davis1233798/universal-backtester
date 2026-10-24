@@ -156,6 +156,9 @@ def create_strategy(config: dict):
     kind = config.get("type", "builtin")
     if kind == "builtin":
         return BuiltinStrategy(config.get("name", "sma_cross"), config.get("options", {}))
+    if kind == "pine":
+        from .pine import PineSubsetStrategy
+        return PineSubsetStrategy(config.get("code", ""), config.get("inputs"))
     if kind == "signal_csv":
         return CsvSignalStrategy(config["path"])
     if os.environ.get("UBT_ALLOW_EXEC") != "1":

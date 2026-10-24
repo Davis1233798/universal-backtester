@@ -52,10 +52,12 @@ def demo_backtest(config: dict) -> dict:
         raise ValueError("Public test site accepts synthetic demo data only")
     if data.get("include_funding") or config.get("refresh"):
         raise ValueError("Funding downloads and refresh are unavailable on the demo site")
-    if strategy.get("type", "builtin") != "builtin":
-        raise ValueError("Public demo accepts built-in strategies only")
-    if strategy.get("name", "sma_cross") not in ("buy_hold", "sma_cross", "rsi_revert", "breakout"):
+    if strategy.get("type", "builtin") not in ("builtin", "pine"):
+        raise ValueError("Public demo accepts built-in and safe Pine subset strategies only")
+    if strategy.get("type", "builtin") == "builtin" and strategy.get("name", "sma_cross") not in ("buy_hold", "sma_cross", "rsi_revert", "breakout"):
         raise ValueError("Unknown built-in strategy")
+    if strategy.get("type") == "pine" and len(strategy.get("code", "")) > 6000:
+        raise ValueError("Public Pine editor limited to 6,000 characters")
     opts = strategy.get("options", {})
     if not isinstance(opts, dict) or len(opts) > 10:
         raise ValueError("Strategy options must be a small object")
@@ -79,8 +81,9 @@ def demo_backtest(config: dict) -> dict:
     if risk.initial_cash > 10_000_000 or risk.leverage > 20:
         raise ValueError("Public demo allows at most 10m starting capital and 20x leverage")
     count = (iso_ms(req.end) - iso_ms(req.start)) // INTERVALS[req.timeframe]
-    if not 2 <= count <= 1500:
-        raise ValueError("Public demo supports 2 to 1,500 candles per run")
+    max_bars = 700 if strategy.get("type") == "pine" else 1500
+    if not 2 <= count <= max_bars:
+        raise ValueError(f"Public demo supports 2 to {max_bars:,} candles per run")
     bars = synthetic(req)
     if len(bars) < 2:
         raise ValueError("Not enough candles")
@@ -112,9 +115,9 @@ def sources():
     if public_demo():
         return {
             "providers": ["demo"], "ccxt_exchanges_installed": [],
-            "strategies": ["buy_hold", "sma_cross", "rsi_revert", "breakout"],
+            "strategies": ["buy_hold", "sma_cross", "rsi_revert", "breakout", "pine_subset"],
             "public_demo": True,
-            "limitations": "Only in-memory synthetic data; no persistent runs, external data or jobs."
+            "limitations": "Synthetic data and restricted Pine subset only. No persistent runs, external data or jobs."
         }
     try:
         import ccxt
@@ -123,10 +126,21 @@ def sources():
         cex = []
     return {"providers": ["demo", "csv", "ccxt", "hyperliquid", "yfinance"],
             "ccxt_exchanges_installed": cex,
-            "strategies": ["buy_hold", "sma_cross", "rsi_revert", "breakout"],
+            "strategies": ["buy_hold", "sma_cross", "rsi_revert", "breakout", "pine_subset"],
             "external_languages": "JSON-lines process strategy protocol (opt-in trusted host)",
             "public_demo": False,
-            "limitations": "Provider coverage varies; no native Pine interpreter."}
+            "limitations": "Provider coverage varies; Pine safe subset is not fully TradingView compatible."}
+
+
+@app.get("/api/markets")
+def markets(provider: str, q: str, exchange: str = "",
+            market_type: str = "swap", limit: int = 30):
+    private_only()
+    from .catalog import search_markets
+    try:
+        return search_markets(provider, q, exchange, market_type, limit)
+    except (ValueError, ImportError, RuntimeError) as err:
+        raise HTTPException(422, detail=str(err)) from err
 
 
 @app.post("/api/backtests")

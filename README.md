@@ -244,3 +244,45 @@ Render 完成建置後會顯示實際 `https://...onrender.com` 網址。**在 R
 
 完整 CEX／DEX／股票版本不可不加權限驗證直接暴露到公網；應另外建立
 **有登入驗證、配額、隔離背景工作及持久資料庫**的私有部署。
+
+
+## 10. 自訂 Pine Script 策略與跨市場商品搜尋
+
+網頁的「策略」欄位現在可選 **自訂 Pine Script（相容子集）**，直接貼上
+TradingView 常見 `.pine` 程式碼或上傳檔案。程式由限定 AST 直譯器執行，**不用**
+`eval()`、`exec()` 或 shell，允許公開示範環境安全測試常見的
+`input.int/float`、`ta.sma/ema/rsi/highest/lowest`、
+`ta.crossover/ta.crossunder`、`if`、`strategy.entry`、
+`strategy.close`、`strategy.close_all`。參考
+`examples/pine_custom_crossover.pine`。
+
+API 例：
+```json
+{"data":{"provider":"demo","symbol":"SYNTHETIC","start":"2024-01-01","end":"2024-06-01"},
+ "risk":{"product_type":"spot","leverage":1},
+ "strategy":{"type":"pine","code":"//@version=6\nstrategy(\"MA\")\nfast=ta.sma(close,10)\nslow=ta.sma(close,30)\nif ta.crossover(fast,slow)\n    strategy.entry(\"Long\",strategy.long)\nif ta.crossunder(fast,slow)\n    strategy.close(\"Long\")"}}
+```
+
+**重要差異**：這不是 TradingView Pine v5/v6 完整解譯器。
+不支援 `strategy.exit` 限價/停損與網格掛單、
+`request.security` 跨時間框架、`array/matrix`、function definitions、
+`for/while`、library import、label/table 繪圖，亦沒有原生 Pine broker emulator
+的完整行為。遇到不支援語法會回應錯誤而不會假裝策略已正確跑完。
+`ta.ema` 與 `ta.rsi` 有短視窗初始化的近似誤差。
+要求更完整 Pine v4–v6 轉譯可使用獨立
+[PyneComp / PyneCore](https://pynecore.org/docs/cli/compile/) 流程
+（需要 PyneSys API key），或用 TradingView 匯出訊號 CSV。
+自訂 Python、JavaScript、Go 等策略仍可透過**可信任的私有部署**
+和 JSON-lines 外掛接口執行。
+
+商品不使用固定列表，而由實際供應商搜尋：
+`GET /api/markets?provider=ccxt&exchange=bybit&market_type=swap&q=BTC&limit=50`
+列出目前活躍合約交易對；
+`provider=hyperliquid&q=BTC` 讀取原生永續合約清單；
+`provider=yfinance&q=TSMC` 搜尋全球股票代號。
+CCXT 的 `spot`、`swap`、`future` 市場類型可分別搜尋，
+交易所 ID 可由 `GET /api/sources` 取得。查到商品不代表該供應商一定有
+指定週期的歷史 OHLCV、過去已下市商品或其合約規格；**目前不可能保證
+全球所有加密幣與所有股票都有完整免費歷史行情**。
+公開 Render 示範模式的 `/api/markets` 禁用，僅私有完整版可查。
+
