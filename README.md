@@ -256,11 +256,25 @@ TradingView 常見 `.pine` 程式碼或上傳檔案。程式由限定 AST 直譯
 `strategy.close`、`strategy.close_all`。參考
 `examples/pine_custom_crossover.pine`。
 
-API 例：
-```json
-{"data":{"provider":"demo","symbol":"SYNTHETIC","start":"2024-01-01","end":"2024-06-01"},
- "risk":{"product_type":"spot","leverage":1},
- "strategy":{"type":"pine","code":"//@version=6\nstrategy(\"MA\")\nfast=ta.sma(close,10)\nslow=ta.sma(close,30)\nif ta.crossover(fast,slow)\n    strategy.entry(\"Long\",strategy.long)\nif ta.crossunder(fast,slow)\n    strategy.close(\"Long\")"}}
+API 例（用 Python 發送 JSON 可保留 Pine 的多行字串）：
+```python
+import requests
+code = """//@version=6
+strategy("MA crossover")
+fast = ta.sma(close, 10)
+slow = ta.sma(close, 30)
+if ta.crossover(fast, slow)
+    strategy.entry("Long", strategy.long)
+if ta.crossunder(fast, slow)
+    strategy.close("Long")
+"""
+result = requests.post("http://127.0.0.1:8000/api/backtests", json={
+    "data": {"provider":"demo","symbol":"SYNTHETIC",
+             "start":"2024-01-01","end":"2024-06-01"},
+    "risk": {"product_type":"spot","leverage":1},
+    "strategy": {"type":"pine", "code":code},
+})
+print(result.json())
 ```
 
 **重要差異**：這不是 TradingView Pine v5/v6 完整解譯器。

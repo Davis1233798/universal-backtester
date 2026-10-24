@@ -56,8 +56,10 @@ def demo_backtest(config: dict) -> dict:
         raise ValueError("Public demo accepts built-in and safe Pine subset strategies only")
     if strategy.get("type", "builtin") == "builtin" and strategy.get("name", "sma_cross") not in ("buy_hold", "sma_cross", "rsi_revert", "breakout"):
         raise ValueError("Unknown built-in strategy")
-    if strategy.get("type") == "pine" and len(strategy.get("code", "")) > 6000:
-        raise ValueError("Public Pine editor limited to 6,000 characters")
+    if strategy.get("type") == "pine":
+        code = strategy.get("code", "")
+        if not isinstance(code, str) or len(code) > 6000:
+            raise ValueError("Public Pine editor limited to 6,000 characters")
     opts = strategy.get("options", {})
     if not isinstance(opts, dict) or len(opts) > 10:
         raise ValueError("Strategy options must be a small object")

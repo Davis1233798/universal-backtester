@@ -88,3 +88,21 @@ def test_hyperliquid_native_market_catalog(monkeypatch):
     result=c.search_markets('hyperliquid','eth')
     assert result['items'][0]['symbol']=='ETH'
     assert result['matched_count']==1
+
+def test_public_pine_api_works_without_exec(monkeypatch,tmp_path):
+    from fastapi.testclient import TestClient
+    from unibacktest.api import app
+    monkeypatch.setenv('UBT_PUBLIC_DEMO','1')
+    monkeypatch.delenv('UBT_ALLOW_EXEC', raising=False)
+    monkeypatch.setenv('UBT_DB',str(tmp_path/'unused.db'))
+    client = TestClient(app)
+    body={'data':{'provider':'demo','symbol':'DEMO','start':'2024-01-01','end':'2024-06-01'},
+          'risk':{'product_type':'spot','leverage':1},
+          'strategy':{'type':'pine','code':PINE}}
+    response=client.post('/api/backtests',json=body)
+    assert response.status_code==200, response.text
+    assert response.json()['run_id']=='demo-not-saved'
+    assert not (tmp_path/'unused.db').exists()
+    body['strategy']['code']='strategy("X")\nimport os\nstrategy.entry("L",strategy.long)'
+    assert client.post('/api/backtests',json=body).status_code==422
+    assert client.get('/api/markets?provider=ccxt&q=BTC&exchange=binance').status_code==403

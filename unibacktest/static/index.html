@@ -20,7 +20,7 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 <div class="layout"><div>
 <section><h2>回測設定</h2><div class="form">
 <div><label>資料來源</label><select id="provider"><option value="demo">合成示範資料</option><option value="ccxt">CEX / CCXT</option><option value="hyperliquid">DEX / Hyperliquid Perp</option><option value="yfinance">全球股票 / Yahoo</option><option value="csv">本地 CSV</option></select></div>
-<div><label>交易所 ID</label><input id="exchange" placeholder="binanceusdm" value="binanceusdm"></div>
+<div><label>交易所 ID</label><input id="exchange" list="exchangeIDs" placeholder="binanceusdm" value="binanceusdm"><datalist id="exchangeIDs"></datalist></div>
 <div class="span"><label>交易商品 / 股票代碼</label><input id="symbol" value="BTC/USDT:USDT" placeholder="BTC/USDT:USDT、BTC、2330.TW、AAPL"></div>
 <div class="span" id="catalog-picker">
 <label>搜尋交易所商品／股票（完整版）</label>
@@ -159,6 +159,11 @@ $('reload').onclick=loadJobs;
 async function initialize(){
   try{
     const sources=await api('/api/sources');
+    if(Array.isArray(sources.ccxt_exchanges_installed)){
+      $('exchangeIDs').replaceChildren(...sources.ccxt_exchanges_installed.map(name=>{
+        const e=document.createElement('option');e.value=name;return e;
+      }));
+    }
     if(sources.public_demo){
       for(const option of Array.from($('provider').options)){ if(option.value!=='demo') option.remove(); }
       $('provider').value='demo';
