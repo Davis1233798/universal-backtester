@@ -71,7 +71,7 @@ def test_node_json_lines(tmp_path,monkeypatch):
     if not shutil.which('node'):pytest.skip('Node not installed')
     monkeypatch.setenv('UBT_ALLOW_EXEC','1')
     script=Path(__file__).resolve().parents[1]/'examples'/'javascript_strategy.mjs'
-    st=create_strategy({'type':'process','command':['node',str(script)]})
+    st=create_strategy({'type':'process','command':['node',str(script)],'timeout':10})
     try:
         value=st({'bars':[{'close':100} for _ in range(25)], 'target':0})
         assert value==0.0
