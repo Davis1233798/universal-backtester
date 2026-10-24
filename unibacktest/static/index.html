@@ -1,0 +1,98 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Universal Backtester</title><style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#e9effc;background:#0d1320;font-size:15px}
+*{box-sizing:border-box}body{margin:0;padding:0 24px 48px}main{max-width:1220px;margin:auto}
+h1{font-size:28px;margin:30px 0 5px}p{line-height:1.6;color:#9cb2cc}h2{font-size:18px;margin:0 0 20px}.sub{margin:0 0 24px}
+.layout{display:grid;grid-template-columns:380px 1fr;gap:20px}section{background:#182235;border:1px solid #2a3b55;border-radius:14px;padding:22px;margin-bottom:20px;min-width:0}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:14px}.span{grid-column:1/-1}label{display:block;color:#aebed3;font-size:12px;margin:0 0 6px}
+input,select,button{font:inherit;max-width:100%;border-radius:8px;border:1px solid #3b4e69;padding:10px 12px;color:#edf5ff;background:#101a2a;width:100%}
+input:focus,select:focus{outline:2px solid #4b89ec}button{background:#2361c4;border:0;font-weight:600;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.secondary{background:#33445f}
+.actions{display:flex;gap:10px;margin-top:18px}.actions button{flex:1}small{color:#9eb0ca}.warning{background:#5d441c;border:1px solid #aa7d2c;color:#fff0c7;padding:10px 12px;border-radius:8px;margin-top:10px;line-height:1.6}
+.error{background:#63232a;border:1px solid #a5424d;padding:12px;border-radius:8px;color:#fff2f3}.status{font-size:13px;color:#c2d6f6;min-height:20px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.metric{background:#101a2a;border-radius:9px;padding:15px}.metric small{display:block;margin-bottom:9px}.metric b{font-size:22px;font-variant-numeric:tabular-nums}
+svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:11px 6px;text-align:right;border-bottom:1px solid #2e415c}td:first-child,th:first-child{text-align:left}
+.table-scroll{overflow:auto}a{color:#9dbdfd}pre{white-space:pre-wrap;word-break:break-word}header{display:flex;align-items:baseline;gap:12px}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:500px){body{padding:0 12px 24px}.grid{grid-template-columns:1fr}.form{grid-template-columns:1fr}.span{grid-column:auto}}
+</style></head><body><main>
+<header><h1>Universal Backtester</h1><small>v0.1 · Local-first · Research / Backtesting only</small></header>
+<p class="sub">CEX/DEX/股票歷史行情 · 下一根開盤成交 · 策略回測 · 每日排程</p>
+<div class="layout"><div>
+<section><h2>回測設定</h2><div class="form">
+<div><label>資料來源</label><select id="provider"><option value="demo">合成示範資料</option><option value="ccxt">CEX / CCXT</option><option value="hyperliquid">DEX / Hyperliquid Perp</option><option value="yfinance">全球股票 / Yahoo</option><option value="csv">本地 CSV</option></select></div>
+<div><label>交易所 ID</label><input id="exchange" placeholder="binanceusdm" value="binanceusdm"></div>
+<div class="span"><label>交易商品 / 股票代碼</label><input id="symbol" value="BTC/USDT:USDT" placeholder="BTC/USDT:USDT、BTC、2330.TW、AAPL"></div>
+<div class="span"><label>CSV 路徑（僅 csv 模式）</label><input id="csv" placeholder="/app/data/my-candles.csv"></div>
+<div><label>起始日（含）</label><input id="start" type="date" value="2024-01-01"></div>
+<div><label>結束日（不含）</label><input id="end" type="date" value="2025-01-01"></div>
+<div><label>K 線週期</label><select id="timeframe"><option>1d</option><option>1h</option><option>4h</option><option>15m</option><option>5m</option><option>1m</option><option>1w</option></select></div>
+<div><label>市場類型</label><select id="product"><option value="perp">永續合約</option><option value="future">交割合約</option><option value="spot">現貨</option><option value="equity">股票</option></select></div>
+<div><label>策略</label><select id="strategy"><option value="sma_cross">SMA 均線交叉</option><option value="buy_hold">買入持有</option><option value="rsi_revert">RSI 均值回歸</option><option value="breakout">Donchian 突破</option></select></div>
+<div><label>最大槓桿</label><input id="leverage" type="number" min="1" max="125" step="1" value="1"></div>
+<div><label>起始資金</label><input id="capital" type="number" min="1" value="10000"></div>
+<div><label>單邊手續費（bps）</label><input id="fee" type="number" min="0" step="0.1" value="6"></div>
+<div><label>滑價（bps）</label><input id="slippage" type="number" min="0" step="0.1" value="2"></div>
+<div><label>週期商品設定</label><select id="marketType"><option value="swap">swap</option><option value="future">future</option><option value="spot">spot</option></select></div>
+<div class="span"><label><input type="checkbox" id="funding" style="width:auto"> 從 CCXT / Hyperliquid 擷取歷史資金費率（合約）</label></div>
+<div class="span"><label><input type="checkbox" id="refresh" style="width:auto"> 強制重新擷取資料（否則優先用快取）</label></div>
+</div><div class="actions"><button id="go">執行回測</button><button class="secondary" id="schedule">新增每日任務</button></div><p class="status" id="status"></p></section>
+<section><h2>注意事項</h2><small>合成示範數據不是市場報價。合約資金費率需在 CSV 的 funding_rate 欄位提供；若缺少資金費率會提示警告。此版本不模擬限價撮合、組合保證金與逐筆成交；不提供實盤下單。服務僅供本機使用。</small></section>
+</div><div>
+<section><h2>績效總覽</h2><div id="metrics" class="grid"><div class="metric">尚未執行回測</div></div><div id="warnings"></div></section>
+<section><h2>資金曲線</h2><svg id="plot" viewBox="0 0 840 300" role="img" aria-label="Equity curve"><text x="30" y="145" fill="#95a8c4">執行回測後顯示資金曲線</text></svg></section>
+<section><h2>交易紀錄</h2><div class="table-scroll"><table><thead><tr><th>時間（UTC）</th><th>方向 / 數量</th><th>成交價</th><th>費用</th><th>原因</th></tr></thead><tbody id="fills"></tbody></table></div></section>
+<section><h2>每日任務</h2><p>排程必須額外啟動 <code>ubt scheduler</code>；預設每日台灣時間 08:00。</p><button id="reload" class="secondary">更新任務清單</button><div id="jobs"></div></section>
+</div></div></main>
+<script>
+const $ = id=>document.getElementById(id), fmt = n=>typeof n==='number'?n.toLocaleString('zh-TW',{maximumFractionDigits:3}):'—';
+const txt = (x)=>String(x??'');
+function config(){ const p=$('provider').value, product=$('product').value;
+  return {data:{provider:p,exchange:$('exchange').value,symbol:$('symbol').value,timeframe:$('timeframe').value,
+      start:$('start').value,end:$('end').value,csv_path:$('csv').value,market_type:$('marketType').value,include_funding:$('funding').checked},
+    risk:{product_type:product,market:product==='equity'?'stock':'crypto',leverage:Number($('leverage').value),
+      initial_cash:Number($('capital').value),fee_bps:Number($('fee').value),slippage_bps:Number($('slippage').value)},
+    strategy:{type:'builtin',name:$('strategy').value,options:{fast:10,slow:30}},refresh:$('refresh').checked};
+}
+$('provider').addEventListener('change',()=>{
+  const p=$('provider').value;
+  if(p==='yfinance'){$('symbol').value='AAPL';$('product').value='equity';$('leverage').value='1';}
+  if(p==='hyperliquid'){$('symbol').value='BTC';$('product').value='perp';}
+  if(p==='ccxt'){$('symbol').value='BTC/USDT:USDT';$('product').value='perp';}
+});
+async function api(path,options){const r=await fetch(path,options);const j=await r.json();if(!r.ok)throw new Error(typeof j.detail==='string'?j.detail:JSON.stringify(j.detail));return j}
+const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+function curve(points){const svg=$('plot');if(!points?.length)return;const width=840,height=300,pad=34;
+  const ys=points.map(p=>p.equity),hi=Math.max(...ys),lo=Math.min(...ys); const spread=Math.max(1e-9,hi-lo);
+  const path=points.map((p,i)=>`${i?'L':'M'} ${(pad+i/(points.length-1||1)*(width-2*pad)).toFixed(2)} ${(height-pad-(p.equity-lo)/spread*(height-2*pad)).toFixed(2)}`).join(' ');
+  svg.innerHTML=''; const ns='http://www.w3.org/2000/svg';
+  function elem(tag,attrs,label){const e=document.createElementNS(ns,tag);Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));if(label)e.textContent=label;svg.appendChild(e);return e}
+  for(let j=0;j<5;j++){const y=pad+j*(height-2*pad)/4;elem('line',{x1:pad,y1:y,x2:width-pad,y2:y,stroke:'#293c57'});
+    elem('text',{x:4,y:y+4,fill:'#9fb0c7','font-size':12},fmt(hi-spread*j/4));}
+  elem('path',{d:path,stroke:'#78b3ff','stroke-width':2.2,fill:'none'});
+  elem('text',{x:pad,y:height-8,fill:'#a3b8cf','font-size':11},new Date(points[0].ts).toISOString().slice(0,10));
+  elem('text',{x:width-130,y:height-8,fill:'#a3b8cf','font-size':11},new Date(points.at(-1).ts).toISOString().slice(0,10));
+}
+function render(res){
+  const m=res.metrics;const values=[['最終權益',fmt(m.final_equity)],['總報酬',fmt(m.return_pct)+'%'],['年化 CAGR',m.cagr_pct===null?'—':fmt(m.cagr_pct)+'%'],
+    ['最大回撤',fmt(m.max_drawdown_pct)+'%'],['Sharpe',fmt(m.sharpe)],['交易平倉次數',fmt(m.closed_trades)],
+    ['勝率',m.win_rate_pct===null?'—':fmt(m.win_rate_pct)+'%'],['手續費',fmt(m.fees_paid)],['資金費',fmt(m.funding_paid_net)]];
+  $('metrics').replaceChildren(...values.map(([key,value])=>{const el=document.createElement('div');el.className='metric';
+    const a=document.createElement('small');a.textContent=key;const b=document.createElement('b');b.textContent=value;el.append(a,b);return el}));
+  $('warnings').replaceChildren(...(res.warnings||[]).map(w=>{const d=document.createElement('div');d.className='warning';d.textContent=w;return d}));
+  curve(res.equity);const body=$('fills');body.replaceChildren(...res.fills.slice(-60).reverse().map(f=>{const tr=document.createElement('tr');
+    [new Date(f.ts).toISOString().slice(0,16),fmt(f.qty),fmt(f.price),fmt(f.fee),f.reason].forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.appendChild(td)});return tr}));
+}
+async function doTask(kind){const go=$(kind);go.disabled=true;$('status').textContent=kind==='go'?'回測執行中…':'建立排程任務中…';
+  try{const res=await post(kind==='go'?'/api/backtests':'/api/jobs',config());
+      if(kind==='go'){render(res);$('status').textContent=`完成：${res.run_id}，${res.bars} 根 K 線`}
+      else{$('status').textContent=`已新增每日任務：${res.job_id}（須啟動 scheduler）`;loadJobs()}
+  }catch(e){$('status').textContent=`錯誤：${e.message}`}
+  finally{go.disabled=false}
+}
+$('go').onclick=()=>doTask('go');$('schedule').onclick=()=>doTask('schedule');
+async function loadJobs(){try{const jobs=await api('/api/jobs');const el=$('jobs');el.replaceChildren(...jobs.map(j=>{const line=document.createElement('p');const btn=document.createElement('button');
+  btn.style.width='auto';btn.style.marginLeft='12px';btn.textContent=j.active?'暫停':'啟用';btn.className='secondary';btn.onclick=async()=>{await api(`/api/jobs/${j.id}?active=${!j.active}`,{method:'PATCH'});loadJobs()};
+  line.textContent=`${j.id.slice(0,8)} · ${j.config.data?.symbol||''} · ${j.last_run_day||'尚未執行'} · ${j.last_result||''}`;line.appendChild(btn);return line}));
+ }catch(e){$('jobs').textContent=e.message}}
+$('reload').onclick=loadJobs;loadJobs();
+</script></body></html>

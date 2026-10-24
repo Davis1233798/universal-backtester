@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "universal-backtester"
+version = "0.1.0"
+description = "Extensible multi-market OHLCV historical backtester"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.110,<1", "uvicorn>=0.25,<1", "httpx>=0.25,<1", "pydantic>=2,<3"]
+
+[project.optional-dependencies]
+cex = ["ccxt>=4,<5"]
+stocks = ["yfinance>=0.2.40,<2"]
+test = ["pytest>=8,<10"]
+all = ["ccxt>=4,<5", "yfinance>=0.2.40,<2", "pytest>=8,<10"]
+
+[project.scripts]
+ubt = "unibacktest.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["unibacktest*"]
+
+[tool.setuptools.package-data]
+unibacktest = ["static/*.html"]

@@ -1,0 +1,10 @@
+//@version=6
+indicator("UBT SMA Signal Export", overlay=false)
+fastLen = input.int(10, "Fast", minval=1)
+slowLen = input.int(30, "Slow", minval=2)
+fast = ta.sma(close, fastLen)
+slow = ta.sma(close, slowLen)
+target = na(slow) ? 0.0 : fast > slow ? 1.0 : 0.0
+plot(target, title="UBT_TARGET")
+// On TradingView: export chart data, then map Time + UBT_TARGET to ts,target CSV.
+// WARNING: TradingView Pine's runtime/backtester is not embedded in this app.

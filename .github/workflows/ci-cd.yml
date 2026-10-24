@@ -1,0 +1,170 @@
+name: CI / CD
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install application and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]'
+      - name: Compile Python code
+        run: python -m compileall -q unibacktest tests
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Validate installed dependencies
+        run: python -m pip check
+      - name: Test CLI with synthetic data
+        env:
+          UBT_DB: ${{ runner.temp }}/cli-smoke.sqlite3
+        run: |
+          ubt demo
+          ubt backtest examples/config-demo.json
+
+  package:
+    name: Build Python distribution
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and verify Python package
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  docker-smoke:
+    name: Docker build and HTTP smoke
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose syntax
+        run: docker compose config --quiet
+      - name: Build Docker image
+        run: docker build --tag universal-backtester:ci .
+      - name: Start container and verify health endpoint
+        run: |
+          docker run --detach --name ubt-smoke -p 127.0.0.1:18000:8000 universal-backtester:ci
+          python - <<'PY'
+          import json, time, urllib.request
+          for attempt in range(40):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:18000/api/health', timeout=2) as response:
+                      assert response.status == 200
+                      assert json.load(response)['ok'] is True
+                  print('Container HTTP health check passed')
+                  break
+              except (OSError, ValueError, AssertionError):
+                  if attempt == 39:
+                      raise
+                  time.sleep(2)
+          PY
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs ubt-smoke || true
+      - name: Stop container
+        if: always()
+        run: docker rm --force ubt-smoke || true
+
+  publish-image:
+    name: Publish multi-architecture image to GHCR
+    if: github.event_name == 'push'
+    needs: [test, package, docker-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata and tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,prefix=sha-
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Publish tagged GitHub release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [package, publish-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist
+      - name: Verify version matches release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, tomllib
+          version = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'Git tag must match pyproject.toml version'
+          PY
+      - name: Create GitHub Release with wheel and source archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --title "$RELEASE_TAG"

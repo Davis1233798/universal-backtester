@@ -1,0 +1,224 @@
+# Universal Backtester · 多市場量化回測系統（MVP 0.1）
+
+**可立即使用的回測原型；不是所有交易所、所有合約或所有策略語言的完整相容實作，也不是交易所實盤撮合模擬器。**
+
+主要功能：
+
+- Web UI (`http://127.0.0.1:8000`)、REST API (`/docs`)、命令列 `ubt`。
+- CEX／部分 DEX：透過 CCXT 支援有 `fetchOHLCV` 能力且商品已掛牌的交易所、現貨或線性合約；可在 API `/api/sources` 檢視 CCXT 安裝後交易所 ID 清單。是否有完整商品/時段/資金費率仍取決於個別交易所。
+- DEX：Hyperliquid 永續合約原生 `/info` K 線，最多最近 5,000 根；包括可選的歷史資金費率。其他 DEX 用 CCXT（如其有接入）或自行編寫資料來源插件。
+- 全球股票：`yfinance` 可查支持的全球代號，例如 `AAPL`, `2330.TW`, `7203.T`, `0700.HK`；受 Yahoo 來源的可取得範圍、使用條款、除權息、時區與存活偏差等限制。需要大規模商業股市資料時換成授權資料商插件。
+- 離線 CSV：任何來源的 OHLCV/K 線資料；選擇性每根 `funding_rate`。
+- 一致 UTC 毫秒時間戳；日期範圍為 **[start, end)**，也就是包含 start、不包含 end。
+- SQLite WAL 歷史快取（以 provider/exchange/symbol/timeframe/marketType/funding 存不同序列）、增量下載、保存每次回測績效與交易紀錄。
+- 策略：SMA 交叉、RSI、Donchian、買入持有；可信任 Python 插件；JavaScript/TypeScript、Go、Rust、C#、Java、R、Julia 等可使用 **JSON Lines 程序協定**；訊號 CSV 適用 Pine Script 等無法在平台直接執行的語言。
+- 下一根開盤成交、線性合約多空、費用/滑價、槓桿、約略強平、指定資金費率、績效（總報酬、CAGR、回撤、Sharpe、勝率）與資金曲線。
+- 在獨立常駐服務內執行已保存的每日回測任務（預設 Asia/Taipei 08:00）。
+
+## 1. 啟動（Docker；建議）
+
+解壓縮至目錄後在專案根目錄執行：
+
+```bash
+docker compose up --build -d
+```
+
+瀏覽 `http://127.0.0.1:8000`；FastAPI Swagger API 在 `http://127.0.0.1:8000/docs`。
+
+**重要：** `docker-compose.yml` 把網頁限制在 `127.0.0.1:8000`，不要直接暴露給公開網路。`api` + `scheduler` 共用 `./data` SQLite；後者每日 08:00 台北時間執行任務。Docker 容器內路徑請用 `/app/data/*.csv`。
+
+### 純 Python
+
+Python 3.11+：
+
+```bash
+python -m venv .venv
+# Linux/macOS
+source .venv/bin/activate
+# Windows PowerShell: .venv\\Scripts\\Activate.ps1
+pip install -e '.[all]'
+ubt demo
+uvicorn unibacktest.api:app --host 127.0.0.1 --port 8000
+# 第二個終端：
+ubt scheduler --time 08:00 --tz Asia/Taipei
+```
+
+不需安裝所有外部資料套件也可跑離線示範：`pip install -e '.[test]'`。
+
+## 2. 命令列實例
+
+```bash
+ubt demo
+ubt backtest examples/config-demo.json
+ubt backtest examples/config-binance-perp.json
+ubt backtest examples/config-taiwan-stock.json
+ubt add-job examples/config-binance-perp.json
+ubt jobs
+ubt run-due --time 08:00 --tz Asia/Taipei
+pytest -q
+```
+
+`ubt demo` 使用**合成行情**，其報酬不代表真實市場表現。真實 Binance 衍生品使用 `binanceusdm` 交易所 ID 與 `BTC/USDT:USDT` 符號；如目前所在地或 API 權限不允許使用，改用其他合法可存取資料源，或 CSV。
+
+### API
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/backtests \
+  -H 'Content-Type: application/json' \
+  -d '{"data":{"provider":"demo","symbol":"SYNTHETIC","start":"2024-01-01","end":"2025-01-01","timeframe":"1d"},"strategy":{"type":"builtin","name":"sma_cross","options":{"fast":10,"slow":30}},"risk":{"initial_cash":10000,"product_type":"spot","leverage":1}}'
+```
+
+其他 API：`GET /api/sources`、`GET /api/health`、`GET /api/backtests`、`GET /api/backtests/{id}`、`POST /api/jobs`、`GET /api/jobs`、`PATCH /api/jobs/{id}?active=false`。建立任務不會自己執行；**必須**同時啟動 scheduler。
+
+## 3. 行情與歷史資料來源
+
+| Provider | 已實作 | 條件與限制 |
+|---|---|---|
+| `demo` | 是，完全離線 | 人工生成，僅供測試 |
+| `csv` | 是，完全離線 | 接受任何授權來源的 OHLCV 欄位 |
+| `ccxt` | 有統一 OHLCV + 可選歷史 funding API | `pip install -e '.[cex]'`; 不是每所/商品都支援 |
+| `hyperliquid` | 原生永續 K 線與資金費率 | API 僅最近約 5,000 根 K；舊歷史需自建存檔/第三方數據 |
+| `yfinance` | 全球 Yahoo 支援的股票代號 | `pip install -e '.[stocks]'`; 研究/個人用途條款、資料可得性受限 |
+| `plugin:<python_module>` | 自行撰寫 | 受信任主機 `UBT_ALLOW_EXEC=1`，匯入模組的 `fetch(req)` |
+
+**提醒：** 本 MVP 不支援原生逆向合約 / 幣本位非線性 P&L、選擇權的非線性到期支付、期貨換月、幣種換匯、借券融券、股票完整企業行為事件；不應把這些商品視為已通過正確性驗證。可先將價格/資金費率標準化為線性 USD 或 USDT 報價後研究，但契約細節仍須補實作。`market_type` 只是 CCXT 市場選擇參數，不代表此引擎包含全部合約規則。
+
+### CSV 來源格式
+
+```csv
+ts,open,high,low,close,volume,funding_rate
+2024-01-01T00:00:00Z,100,106,98,105,1000,0
+2024-01-02T00:00:00Z,105,111,104,110,1200,0.0001
+```
+
+- `ts` 是 K 線開盤 UTC ISO 8601、UNIX 秒或毫秒。
+- `funding_rate` 可省略；未提供視為 **0，會低估/高估永續合約表現**。
+- 股票日線/週線以交易所當地**交易日**映射成 UTC 午夜作儲存鍵；股票盤中線與加密貨幣保存實際 UTC 時間。
+- 同一來源多次更新依時間戳覆寫；`refresh=true` 重新讀取數據，預設讀快取。
+- 本引擎把資金費率視為該 K 線內到期應計費用；多筆事件聚合到大週期時按利率相加，屬於近似。
+- K 線缺口不會填平；結果 `warnings` 提醒缺資料或非交易日。不同股票交易所的休市日不適合用加密貨幣的連續 K 線檢驗標準判斷。
+
+## 4. 策略語言／插件協定
+
+### 4.1 內建策略
+
+`buy_hold`、`sma_cross`（參數 `fast`, `slow`, `long_short`）、`rsi_revert`（`period`, `buy_below`, `sell_above`, `long_short`）、`breakout`（`lookback`,`long_short`）。
+
+每根 K 收盤後計算：
+
+- `target = 1`：將本策略的配置資金設定成**滿倉多單**。
+- `target = 0`：平倉。
+- `target = -1`：滿倉空單，僅線性合約允許。
+- `target` 必須介於 `-1` ~ `1`；名義槓桿 `leverage × abs(target)`。倉位保持到下一次目標變更，非每日重新等比調倉。
+
+### 4.2 Python 插件（非隔離沙盒）
+
+參考 `examples/python_strategy.py`，提供 `on_bar(ctx) -> float`：
+
+```json
+{
+  "strategy": {"type": "python", "path": "examples/python_strategy.py"}
+}
+```
+
+**只執行自己信任的程式**：
+
+```bash
+UBT_ALLOW_EXEC=1 ubt backtest my_config.json
+```
+
+### 4.3 JavaScript、Go、C#、Rust、Java、R 等其他語言
+
+使用固定程序協定：啟動一個常駐可執行程序，從標準輸入逐行讀取 JSON，對每個請求**只輸出一行** `{"target":0.0}`；stdout 不可用於 log。輸入 JSON：
+
+```json
+{
+  "bars": [{"ts": 1704067200000, "open": 100, "high": 103, "low": 99, "close": 102, "volume": 123, "funding_rate": 0}],
+  "target": 0,
+  "position": 0,
+  "wallet": 10000,
+  "equity": 10000,
+  "timeframe": "1d"
+}
+```
+
+`bars` 最多保留最近 500 根**已收盤** K 線，沒有未來 K。每行同步回答，預設 3 秒超時會殺掉程序；跨語言腳本可以保存程式內狀態。
+
+```json
+{"strategy":{"type":"process","command":["node","examples/javascript_strategy.mjs"],"timeout":3}}
+```
+
+Go 例子：`go build -o /tmp/ubt-go examples/go_strategy.go`；啟用 `UBT_ALLOW_EXEC=1` 後，command 設為 `["/tmp/ubt-go"]`。TypeScript 可編譯成 JS，其他語言只需遵守相同 JSON-lines 協定。Docker 內建 Node.js，但 Go/C#/Rust/Java/R 等需自行安裝執行環境或掛載已編譯程式。**不是可以任意貼入任何語言原始碼就直接執行**。
+
+### 4.4 TradingView Pine Script
+
+Pine Script 需要 TradingView Pine runtime；本程式**沒有**內建 Pine 編譯器或策略解譯器。`examples/pine_strategy.pine` 展示畫出 `UBT_TARGET` 訊號；可在 TradingView 匯出圖表資料（依帳戶功能），將 Time/UBT_TARGET 欄轉成 `ts,target`，再用訊號 CSV：
+
+```json
+{"strategy":{"type":"signal_csv","path":"examples/strategy_signals.csv"}}
+```
+
+CSV 的 `ts` 必須是**發出訊號那根 K 的開盤時間**，目標在這根 K 的收盤時才可得，實際成交在下一根 K 開盤。**若匯出的訊號本身使用未來函數，平台無法消除這個偏差。**
+
+### 4.5 擴充新的交易所、股票來源或 DEX
+
+`examples/vendor_adapter.py` 是外掛範例。將模組放在 Python module path：
+
+```bash
+PYTHONPATH=examples:. UBT_ALLOW_EXEC=1 ubt backtest my_vendor_config.json
+```
+
+`data.provider = "plugin:vendor_adapter"`；模組實作 `fetch(req: DataRequest) -> list[Bar]`。回傳型別、OHLC 有效性、時間排序與範圍會再檢查。讀取交易所 REST API、RPC、indexer 或收費資料商須遵循授權、限流和存取權限。專案也可延伸到 Polygon、EODHD、TWSE、GMX、dYdX 等，但**這些特定來源尚未在本 MVP 綁定/實測**。
+
+## 5. 回測假設與研究注意事項
+
+**已做：** 不偷看未來 K、交易訊號下一根 K 開盤成交；收盤標記；線性多空、單一淨倉位；固定單邊 fee bps / slippage bps；倉位事件；指定歷史資金費率；極端價格低於維持保證金的近似強平；所有假設回傳於 `assumptions`。
+
+**尚未做（很重要）：** 交易所級分層維持保證金及逐倉/全倉規則、保險基金、ADL、不同交易對的合約乘數、tick size/lot size、成交量限制/價格衝擊、K 線內 OHLC 先後順序、limit/stop order、L2 order book、可成交性分析、股票股息稅費/拆併、股票退市股票的存活偏差、外匯匯率、期貨展期、跨資產投資組合、walk-forward 優化、多重測試校正與回測資料授權保證。OHLC 強平以最不利極值估計，**可能比實際更悲觀**，也無法正確處理跳空後的真實撮合。
+
+因此不應把某個回測的「勝率」當成實際可達成報酬。要做可信的策略比較，需要相同的成本、資料品質、樣本切分和風險控制；正式交易前需獨立驗證。
+
+## 6. 日排程、資料延續與限制
+
+- `POST /api/jobs` 儲存任務，獨立 `ubt scheduler` 每日一輪；執行失敗會保存錯誤狀態，**同一天不自動重試**。
+- 啟動時間晚於指定時間也會補跑**當天**尚未執行的任務；跨日停機不會補跑歷史漏執行日期。
+- 使用增量更新（回頭抓取最後 2 根 K）。若來源在更早時間修改資料，須自行 `refresh=true` 強制重抓完整歷史。
+- 定期備份 `./data/backtests.sqlite3`；單機 SQLite 適合小型研究，海量 1 秒數據應改 Parquet/ClickHouse/TimescaleDB 等並對引擎進行效能擴展。
+- 資料查詢不需要交易所 API 金鑰（公開歷史 K 線）；部分來源對地區、限流、歷史存取與費用有額外限制。
+- 部分交易所實際能提供多久數據取決於上線日、API 分頁與保存期限；平台不會自行創造不存在的歷史行情。
+
+## 7. 測試
+
+```bash
+pip install -e '.[test]'
+pytest -q
+```
+
+測試涵蓋：下一根開盤、資金費率多空、強平、目標倉位驗證、SQLite、CSV、Daily scheduler、HTTP UI/API、模擬 CCXT/Hypeliquid API、Node.js JSON Lines 程序。模擬 API 測試**不等於已驗證交易所可連線**；建議在部署主機對幣別、時段和 API 權限做真實下載測試。
+
+## 8. 技術參考
+
+- CCXT manual: https://github.com/ccxt/ccxt/wiki/Manual
+- Hyperliquid candle/funding info API: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint
+- yfinance documentation and legal disclaimer: https://ranaroussi.github.io/yfinance/
+- TradingView strategies: https://www.tradingview.com/pine-script-docs/faq/strategies/
+
+## 8. GitHub Actions：CI/CD 與版本發布
+
+專案的 `.github/workflows/ci-cd.yml` 在以下事件執行：
+
+- **Pull Request → `main`**：Python 3.11／3.12／3.13 測試、套件編譯、CLI smoke test、Python wheel/sdist 建置與驗證，以及 Docker Compose 檢查、Docker build 與 HTTP health check。PR **不推送映像**。
+- **推送到 `main`**：先跑上述檢查；全部成功後，使用內建 `GITHUB_TOKEN` 推送 **linux/amd64 + linux/arm64** Docker 映像到 GitHub Container Registry，標籤包含 `latest` 和 `sha-<commit>`。不需要個人 PAT。
+- **推送 `vX.Y.Z` 標籤**：同樣先跑 CI，推送帶版本標籤的 Docker 映像，並在 GitHub Releases 發布 Python wheel 和 source distribution。版本必須與 `pyproject.toml` 的 `project.version` 一致。Release 不包含 Windows `.exe` 或 `.msi`。
+
+查看 [Actions](https://github.com/Davis1233798/universal-backtester/actions) 與 [Releases](https://github.com/Davis1233798/universal-backtester/releases)。GHCR 映像路徑：`ghcr.io/davis1233798/universal-backtester:latest`（只有 `main` 的 publish job 成功後才會存在）。例如：
+
+```bash
+# 映像已發布時可拉取；預設 Web UI 僅綁定本機
+# 注意：將 /your/path/data 改為實際資料目錄
+docker run -d --name ubt-api -p 127.0.0.1:8000:8000 \
+  -v /your/path/data:/app/data \
+  ghcr.io/davis1233798/universal-backtester:latest
+```
+
+建立版本標籤時，先修改 `pyproject.toml` 版本並確保它已推到 `main`，再建立符合的 `vX.Y.Z` Git 標籤。**CI/CD 只自動發布到 GHCR / GitHub Releases，不會擅自部署到自有主機或公開網路**；若要做到真正的遠端環境自動部署，還需要部署目標、認證機制與網路安全設定。

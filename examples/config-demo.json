@@ -1,0 +1,5 @@
+{
+  "data": {"provider":"demo", "symbol":"SYNTHETIC", "timeframe":"1d", "start":"2024-01-01", "end":"2025-01-01"},
+  "strategy": {"type":"builtin", "name":"sma_cross", "options":{"fast":10,"slow":30,"long_short":false}},
+  "risk": {"initial_cash":10000, "fee_bps":6, "slippage_bps":2, "leverage":1, "product_type":"spot", "market":"crypto"}
+}

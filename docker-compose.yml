@@ -1,0 +1,14 @@
+services:
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+  scheduler:
+    build: .
+    command: ["ubt", "scheduler", "--time", "08:00", "--tz", "Asia/Taipei"]
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

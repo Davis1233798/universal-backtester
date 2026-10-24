@@ -1,0 +1,6 @@
+{
+  "data": {"provider":"ccxt", "exchange":"binanceusdm", "symbol":"BTC/USDT:USDT", "market_type":"swap", "timeframe":"1h", "start":"2026-09-01", "end":"2026-09-15"},
+  "strategy": {"type":"builtin", "name":"sma_cross", "options":{"fast":10,"slow":30,"long_short":true}},
+  "risk": {"initial_cash":10000, "fee_bps":6, "slippage_bps":2, "leverage":2, "product_type":"perp", "market":"crypto"},
+  "refresh": true
+}

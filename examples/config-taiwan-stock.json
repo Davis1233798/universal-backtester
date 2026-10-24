@@ -1,0 +1,6 @@
+{
+  "data": {"provider":"yfinance", "symbol":"2330.TW", "timeframe":"1d", "start":"2024-01-01", "end":"2026-01-01"},
+  "strategy": {"type":"builtin", "name":"sma_cross", "options":{"fast":10,"slow":30}},
+  "risk": {"initial_cash":100000, "fee_bps":14.25, "slippage_bps":3, "leverage":1, "product_type":"equity", "market":"stock"},
+  "refresh": true
+}
