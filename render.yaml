@@ -1,0 +1,20 @@
+# One-click Render Blueprint for a safe, public, synthetic-data-only demo.
+# Real CEX/DEX/stocks, plugins, files, and scheduled jobs remain local/private.
+services:
+  - type: web
+    name: universal-backtester-demo
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: UBT_PUBLIC_DEMO
+        value: "1"
+      - key: UBT_ALLOW_EXEC
+        value: "0"
+      - key: UBT_DB
+        value: /tmp/universal-backtester-demo.sqlite3
+      - key: PORT
+        value: "8000"

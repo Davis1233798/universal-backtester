@@ -222,3 +222,25 @@ docker run -d --name ubt-api -p 127.0.0.1:8000:8000 \
 ```
 
 建立版本標籤時，先修改 `pyproject.toml` 版本並確保它已推到 `main`，再建立符合的 `vX.Y.Z` Git 標籤。**CI/CD 只自動發布到 GHCR / GitHub Releases，不會擅自部署到自有主機或公開網路**；若要做到真正的遠端環境自動部署，還需要部署目標、認證機制與網路安全設定。
+
+
+## 9. 公開網頁測試部署（Render Blueprint）
+
+為了避免公開執行外部 Python/JS 程式及任意路徑讀取，`render.yaml` 預設使用
+**`UBT_PUBLIC_DEMO=1` 公開示範模式**。此模式仍在伺服器上運行實際
+Python 回測引擎，但是 **只能使用人工合成 K 線**，無法查詢 CEX／DEX／股市
+的真實行情，也不會保存回測結果或啟動每日排程。單次最多 1,500 根 K 線；
+自動限制公開回測同時執行數。API 文件仍在 `/docs`。
+
+按以下連結在自己的 Render 帳號建立 **免費 Web Service**（需在 Render 確認
+授權及建立部署）：
+
+[Deploy to Render](https://render.com/deploy?repo=https://github.com/Davis1233798/universal-backtester)
+
+Render 完成建置後會顯示實際 `https://...onrender.com` 網址。**在 Render 未完成部署前，
+不能假定該網址存在。** Blueprint 定義 Singapore 區域、Docker、`/api/health`
+健康檢查、成功 CI 才自動部署（有串接 GitHub provider 時）。
+免費服務閒置後會休眠，重開存在冷啟動延遲，亦不含持久化磁碟。
+
+完整 CEX／DEX／股票版本不可不加權限驗證直接暴露到公網；應另外建立
+**有登入驗證、配額、隔離背景工作及持久資料庫**的私有部署。

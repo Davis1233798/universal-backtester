@@ -96,3 +96,36 @@ def test_yfinance_daily_stock_session_day(monkeypatch):
     bars=fetch(r)
     assert len(bars)==2
     assert bars[0].ts==1704153600000  # local 2024-01-02 -> UTC date 2024-01-02
+
+
+def test_public_demo_is_stateless_and_rejects_unsafe_operations(tmp_path, monkeypatch):
+    monkeypatch.setenv('UBT_PUBLIC_DEMO', '1')
+    monkeypatch.setenv('UBT_DB', str(tmp_path/'should_not_exist.db'))
+    client = TestClient(app)
+    assert client.get('/api/health').json()['public_demo'] is True
+    providers = client.get('/api/sources').json()
+    assert providers['providers'] == ['demo']
+    payload = {
+        'data': {'provider': 'demo', 'symbol': 'SYNTHETIC',
+                 'start': '2024-01-01', 'end': '2024-06-01'},
+        'risk': {'product_type': 'spot', 'leverage': 1},
+        'strategy': {'type': 'builtin', 'name': 'sma_cross'}
+    }
+    good = client.post('/api/backtests', json=payload)
+    assert good.status_code == 200, good.text
+    assert good.json()['run_id'] == 'demo-not-saved'
+    assert good.json()['metrics']['initial_equity'] == 10000
+    assert not (tmp_path/'should_not_exist.db').exists()
+    payload['data']['provider'] = 'csv'
+    payload['data']['csv_path'] = '/etc/passwd'
+    assert client.post('/api/backtests',json=payload).status_code == 422
+    payload['data']['provider'] = 'demo'
+    payload['strategy'] = {'type': 'process', 'command': ['sh', '-c', 'echo hijack']}
+    assert client.post('/api/backtests',json=payload).status_code == 422
+    payload['strategy'] = {'type': 'builtin','name': 'buy_hold'}
+    payload['data']['timeframe'] = '1m'
+    assert client.post('/api/backtests',json=payload).status_code == 422
+    for route in ('/api/backtests','/api/backtests/random','/api/jobs'):
+        assert client.get(route).status_code == 403
+    assert client.post('/api/jobs',json=payload).status_code == 403
+    assert client.patch('/api/jobs/random?active=true').status_code == 403

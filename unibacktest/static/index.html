@@ -14,7 +14,7 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 .table-scroll{overflow:auto}a{color:#9dbdfd}pre{white-space:pre-wrap;word-break:break-word}header{display:flex;align-items:baseline;gap:12px}
 @media(max-width:900px){.layout{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:500px){body{padding:0 12px 24px}.grid{grid-template-columns:1fr}.form{grid-template-columns:1fr}.span{grid-column:auto}}
-</style></head><body><main>
+[hidden]{display:none!important}</style></head><body><main>
 <header><h1>Universal Backtester</h1><small>v0.1 · Local-first · Research / Backtesting only</small></header>
 <p class="sub">CEX/DEX/股票歷史行情 · 下一根開盤成交 · 策略回測 · 每日排程</p>
 <div class="layout"><div>
@@ -94,5 +94,31 @@ async function loadJobs(){try{const jobs=await api('/api/jobs');const el=$('jobs
   btn.style.width='auto';btn.style.marginLeft='12px';btn.textContent=j.active?'暫停':'啟用';btn.className='secondary';btn.onclick=async()=>{await api(`/api/jobs/${j.id}?active=${!j.active}`,{method:'PATCH'});loadJobs()};
   line.textContent=`${j.id.slice(0,8)} · ${j.config.data?.symbol||''} · ${j.last_run_day||'尚未執行'} · ${j.last_result||''}`;line.appendChild(btn);return line}));
  }catch(e){$('jobs').textContent=e.message}}
-$('reload').onclick=loadJobs;loadJobs();
+$('reload').onclick=loadJobs;
+async function initialize(){
+  try{
+    const sources=await api('/api/sources');
+    if(sources.public_demo){
+      for(const option of Array.from($('provider').options)){ if(option.value!=='demo') option.remove(); }
+      $('provider').value='demo';
+      $('provider').disabled=true;
+      $('symbol').value='SYNTHETIC';
+      $('schedule').hidden=true;
+      $('jobs').closest('section').hidden=true;
+      for(const id of ['exchange','csv','funding','refresh','marketType']){
+        $(id).closest('div').hidden=true;
+      }
+      document.querySelector('header small').textContent='v0.1 · Public Demo · Synthetic Data';
+      document.querySelector('.sub').textContent='公開測試版：在伺服器執行真正的回測引擎，但行情是人工合成，非交易所真實價格。';
+      document.querySelector('section:nth-child(2) small').textContent=
+        '公開版本不提供外部交易所、檔案、外部策略程式與每日排程。單次最多 1,500 根 K 線，結果不儲存。';
+      $('status').textContent='公開示範模式已啟用：選擇日期、週期與策略後即可執行。';
+    }else{
+      loadJobs();
+    }
+  }catch(e){
+    $('status').textContent='無法讀取網站模式：'+e.message;
+  }
+}
+initialize();
 </script></body></html>
