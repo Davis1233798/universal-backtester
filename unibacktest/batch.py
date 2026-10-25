@@ -44,7 +44,7 @@ def _one(index: int, config: dict, chart_points: int) -> dict:
     """Worker process creates its own storage and returns summary, not raw millions."""
     try:
         # Independent strategy instance and isolated P&L for each market.
-        result = execute(config, save=False)
+        result = execute(config, store=Store(os.environ.get('UBT_DB') or None), save=False)
         equity = result.pop("equity")
         fills = result.pop("fills")
         trades = result.pop("closed_trades")
@@ -102,7 +102,7 @@ def run_multi_market(config: dict) -> dict:
         builds.append({"data": data, "strategy": common_strategy,
                        "risk": {**risk_base, **risk}, "refresh": bool(config.get("refresh", False))})
     # Initialize SQLite schema in the parent process to avoid concurrent DDL races.
-    Store()
+    Store(os.environ.get('UBT_DB') or None)
     results: list[dict | None] = [None]*len(builds)
     # One process per worker, NOT one process per K line.
     # Failure of one venue should not drop all results.
