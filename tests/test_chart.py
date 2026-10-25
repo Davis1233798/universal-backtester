@@ -31,3 +31,14 @@ def test_short_range_uses_actual_bars(tmp_path):
     assert out['represented_bars']==10
     assert out['display_points']==10
     assert all(x['n_bars']==1 for x in out['candles'])
+
+
+def test_preview_large_synthetic_no_visual_cutoff():
+    from unibacktest.chart import preview_candles
+    candles=[Bar(i*60000,100,110 if i==8500 else 102,90 if i==14300 else 99,100,1)
+             for i in range(20000)]
+    out=preview_candles(candles,900)
+    assert len(out)<=900
+    assert sum(x['n_bars'] for x in out)==20000
+    assert max(x['high'] for x in out)==110
+    assert min(x['low'] for x in out)==90

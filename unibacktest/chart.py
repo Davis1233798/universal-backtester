@@ -55,3 +55,23 @@ def read_candles(req: DataRequest, store: Store, max_points: int = 1200) -> dict
             'display_points':len(output),'bucket_ms':bucket_width,
             'aggregated_for_display_only':bucket_width>step,
             'warning':'Aggregated display candles must never be fed back to the strategy engine'}
+
+
+def preview_candles(bars, max_points=900) -> list[dict]:
+    """Produce display-only aggregates for in-memory synthetic demonstrations.
+
+    The original full-resolution bars are used for all backtest calculations.
+    """
+    if max_points < 10:
+        raise ValueError('max_points must be >= 10')
+    if not bars:
+        return []
+    stride = math.ceil(len(bars)/max_points)
+    output=[]
+    for start in range(0,len(bars),stride):
+        group=bars[start:start+stride]
+        output.append({'ts':group[0].ts,'last_ts':group[-1].ts,
+                       'open':group[0].open,'high':max(x.high for x in group),
+                       'low':min(x.low for x in group),'close':group[-1].close,
+                       'volume':sum(x.volume for x in group),'n_bars':len(group)})
+    return output
