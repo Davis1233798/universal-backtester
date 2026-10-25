@@ -57,6 +57,9 @@ def signal(name: str, ctx: dict, options: dict) -> float:
 class BuiltinStrategy:
     def __init__(self, name: str, options: dict | None = None):
         self.name, self.options = name, options or {}
+        values=[self.options.get(k,0) for k in ("fast","slow","period","lookback")]
+        self.streaming_window=max([500]+[int(v)+2 for v in values if
+                                   type(v) in (int,float) and v>=1])
     def __call__(self, ctx: dict) -> float:
         return signal(self.name, ctx, self.options)
     def close(self):

@@ -2,7 +2,8 @@
 from __future__ import annotations
 import math
 from dataclasses import asdict
-from collections.abc import Sequence
+from collections.abc import Sequence, Iterable
+from collections import deque
 from .model import Bar, Risk, INTERVALS, normalize
 
 
@@ -24,6 +25,86 @@ class _HistoricalBars(Sequence):
         if index < 0 or index >= self._end:
             raise IndexError(index)
         return self._bars[index].to_dict()
+
+
+
+class _OnlineEquity:
+    """One-pass risk statistics, independent of the retained chart preview."""
+    def __init__(self):
+        self.first = self.last = None
+        self.prev = self.peak = None
+        self.max_dd = self.max_dd_amount = 0.0
+        self.nreturns = self.sum_r = self.sum_r2 = self.sum_down2 = 0.0
+        self.exposures = self.count = 0
+
+    def add(self, point):
+        price=point["equity"]
+        if self.first is None:
+            self.first=point
+            self.peak=price
+        elif self.prev is not None and self.prev>0:
+            r=price/self.prev-1
+            self.nreturns+=1
+            self.sum_r+=r
+            self.sum_r2+=r*r
+            self.sum_down2+=min(0,r)**2
+        self.peak=max(self.peak,price)
+        if self.peak>0:
+            self.max_dd=max(self.max_dd,(self.peak-price)/self.peak)
+        self.max_dd_amount=max(self.max_dd_amount,self.peak-price)
+        self.exposures+=abs(point["position"])>1e-12
+        self.prev=price
+        self.last=point
+        self.count+=1
+
+    def override(self, metrics, risk, timeframe):
+        from math import sqrt
+        trading_days = 252 if risk.market=="stock" else 365
+        if timeframe in ("1d","3d","1w"):
+            periods={"1d":trading_days,"3d":trading_days/3,"1w":52}[timeframe]
+        else:
+            hours=6.5 if risk.market=="stock" else 24
+            periods=trading_days*hours*3600000/INTERVALS[timeframe]
+        sharpe=sortino=vol=None
+        if self.nreturns >=2:
+            avg=self.sum_r/self.nreturns
+            variance=max(0,(self.sum_r2-self.nreturns*avg*avg)/(self.nreturns-1))
+            downside=sqrt(self.sum_down2/self.nreturns)
+            if variance>0:
+                sharpe=avg/sqrt(variance)*sqrt(periods)
+                vol=sqrt(variance)*sqrt(periods)*100
+            if downside>0:
+                sortino=avg/downside*sqrt(periods)
+        def sane(x):
+            return round(x, 4) if x is not None and math.isfinite(x) else None
+        metrics.update(max_drawdown_pct=sane(self.max_dd*100),
+                       max_drawdown_amount=sane(self.max_dd_amount),
+                       exposure_pct=sane(100*self.exposures/self.count),
+                       sharpe=sane(sharpe),sortino=sane(sortino),
+                       annual_volatility_pct=sane(vol),
+                       calmar=sane(metrics["cagr_pct"]/100/self.max_dd)
+                       if metrics["cagr_pct"] is not None and self.max_dd>0 else None,
+                       recovery_factor=sane(metrics["net_profit"]/self.max_dd_amount)
+                       if self.max_dd_amount>0 else None)
+        return metrics
+
+
+def _preview_append(points, row, maximum=2000):
+    points.append(row)
+    if len(points)<=maximum:
+        return
+    # Compress adjacent groups while retaining local highs/lows and endpoints.
+    inner=points[1:-1]
+    reduced=[points[0]]
+    for i in range(0,len(inner),4):
+        group=inner[i:i+4]
+        a=min(group,key=lambda x:x["equity"])
+        b=max(group,key=lambda x:x["equity"])
+        for point in sorted((a,b),key=lambda x:x["ts"]):
+            if point is not reduced[-1]:
+                reduced.append(point)
+    reduced.append(points[-1])
+    points[:]=reduced
 
 
 def _metrics(equity: list[dict], closed: list[dict], fees: float, funding: float,
@@ -112,8 +193,8 @@ def _metrics(equity: list[dict], closed: list[dict], fees: float, funding: float
             "fees_paid": rounded(fees), "funding_paid_net": rounded(funding)}
 
 
-def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
-                 window: int = 500) -> dict:
+def run_backtest(bars: Iterable[Bar], strategy, risk: Risk, timeframe: str = "1d",
+                 window: int = 500, *, streaming: bool = False) -> dict:
     """Signals based on current bar CLOSE execute on next bar OPEN.
 
     Important limitations: 1 symbol; linear instrument only; cross-margin rough liquidation
@@ -123,9 +204,16 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
     risk.validate()
     if timeframe not in INTERVALS:
         raise ValueError("unknown timeframe")
-    bars = normalize(bars)
-    if len(bars) < 2:
-        raise ValueError("At least two bars required")
+    if not streaming:
+        bars=normalize(list(bars))
+        if len(bars)<2:
+            raise ValueError("At least two bars required")
+    else:
+        window=max(window,int(getattr(strategy,"streaming_window",window)))
+        if window < 2:
+            raise ValueError("streaming window must cover at least two bars")
+        bars=iter(bars)
+    online = _OnlineEquity() if streaming else None
     position = 0.0
     entry = 0.0
     entry_ts = None
@@ -137,7 +225,7 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
     pending_target: float | None = None
     protective_exit: dict | None = None
     live_target = 0.0
-    recent = []
+    recent = deque(maxlen=window) if streaming else []
     fills: list[dict] = []
     closed: list[dict] = []
     equity: list[dict] = []
@@ -197,8 +285,18 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
         fills.append({"ts": ts, "price": round(fill_price, 8), "qty": round(delta, 8),
                       "fee": round(fee, 8), "reason": why, "position_after": round(position, 8)})
 
+    last_bar=None
+    funding_points=0
+    bars_seen=0
+    previous_ts=None
     try:
         for i, b in enumerate(bars):
+            if streaming and previous_ts is not None and b.ts<=previous_ts:
+                raise ValueError("streamed bars must be strictly increasing in UTC timestamp")
+            previous_ts=b.ts
+            last_bar=b
+            bars_seen+=1
+            funding_points+=b.funding_rate!=0
             if pending_target is not None and not stopped_out:
                 target = pending_target
                 # No daily rebalance if the strategy kept the same desired signal.
@@ -254,15 +352,22 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
                 open_funding += payment
 
             current_equity = equity_at(b.close)
-            equity.append({"ts": b.ts, "equity": round(current_equity, 8),
-                           "position": round(position, 8), "close": b.close})
+            row={"ts": b.ts, "equity": round(current_equity, 8),
+                 "position": round(position, 8), "close": b.close}
+            if streaming:
+                online.add(row)
+                _preview_append(equity, row)
+            else:
+                equity.append(row)
             recent.append(b.to_dict())
-            if len(recent) > window:
+            if not streaming and len(recent) > window:
                 recent.pop(0)
-            if i == len(bars)-1 or stopped_out:
+            if (not streaming and i == len(bars)-1) or stopped_out:
                 continue
-            context_bars = (_HistoricalBars(bars, i+1)
-                            if getattr(strategy, "history_all", False) else list(recent))
+            context_bars = (_HistoricalBars(recent, len(recent)) if streaming and
+                            getattr(strategy, "history_all", False) else
+                            (_HistoricalBars(bars, i+1) if getattr(strategy,"history_all",False)
+                             else list(recent)))
             ctx = {"bars": context_bars, "target": live_target, "position": position,
                    "wallet": wallet, "equity": current_equity, "timeframe": timeframe}
             target = float(strategy(ctx))
@@ -277,15 +382,22 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
             if risk.product_type in ("spot", "equity") and target < 0:
                 raise ValueError("spot/equity strategy target cannot be negative")
             pending_target = target
+        if bars_seen < 2:
+            raise ValueError("At least two bars required")
         if risk.force_close and position:
-            last = bars[-1]
+            last = last_bar
             fill(last.ts + INTERVALS[timeframe], last.close, -position, "end_of_test")
             equity[-1]["equity"] = round(wallet, 8)
             equity[-1]["position"] = 0.0
-        return {"metrics": _metrics(equity, closed, total_fees, total_funding, risk, timeframe),
+        metrics=_metrics([online.first,online.last] if streaming else equity,
+                         closed,total_fees,total_funding,risk,timeframe)
+        if streaming:
+            metrics=online.override(metrics,risk,timeframe)
+        return {"metrics": metrics,
                 "equity": equity, "fills": fills, "closed_trades": closed,
-                "liquidations": liquidations, "bars": len(bars),
-                "funding_data_points": sum(b.funding_rate != 0 for b in bars),
+                "streaming_preview_only": streaming,
+                "liquidations": liquidations, "bars": bars_seen,
+                "funding_data_points": funding_points,
                 "assumptions": [
                     "Signals use completed-bar data; fills are NEXT candle open (except forced final close).",
                     "OHLC extreme liquidation is approximate; within-bar fill order is not modeled.",
@@ -296,7 +408,9 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
                     "Profit factor, win rate and average trade use realized NET P&L after allocated fees and funding; partial exits count as separate trades.",
                     "Protective stop-market and take-profit limit are activated on the next candle. A gap through a stop fills at its worse open; concurrent OHLC hits assume the stop first.",
                     "No order book, partial fills, trailing/stop-limit orders, tick/lot-size constraints or exchange-specific liquidation tiers.",
-                    "R requires r_reference_stop_pct as a reporting denominator only; order stops do not automatically define 1R."]}
+                    "R requires r_reference_stop_pct as a reporting denominator only; order stops do not automatically define 1R.",
+                    "Streaming mode returns an extrema-preserving equity preview, not every equity point; indicators and trading operate on full-resolution candles.",
+                    "Streaming full-run metrics use online close equity statistics; last-bar forced close costs do not retroactively revise extrema."]}
     finally:
         if hasattr(strategy, "close"):
             strategy.close()

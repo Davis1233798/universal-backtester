@@ -37,6 +37,7 @@ def private_only():
 
 
 class BacktestPayload(BaseModel):
+    streaming: bool = False
     data: dict = Field(default_factory=dict)
     risk: dict = Field(default_factory=dict)
     strategy: dict = Field(default_factory=dict)
@@ -48,6 +49,8 @@ def demo_backtest(config: dict) -> dict:
     data = config.get("data", {})
     strategy = config.get("strategy", {})
     risk_data = config.get("risk", {})
+    if config.get("streaming"):
+        raise ValueError("Public synthetic demo does not support SQLite streaming API")
     if data.get("provider", "demo") != "demo":
         raise ValueError("Public test site accepts synthetic demo data only")
     if data.get("include_funding") or config.get("refresh"):

@@ -160,6 +160,36 @@ class PineSubsetStrategy:
             (node.slice.value for statement in self.body for node in ast.walk(statement)
              if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
              and type(node.slice.value) is int), default=0) + 1
+        # Infer simple constant/input indicator lengths for bounded streaming.
+        known={}
+        periods=[]
+        dynamic=False
+        for stmt in self.body:
+            if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
+                expr=stmt.value
+                if isinstance(expr, ast.Constant) and type(expr.value) is int:
+                    known[stmt.targets[0].id]=expr.value
+                if isinstance(expr, ast.Call) and _function_name(expr.func)=="input.int":
+                    default=expr.args[0].value if expr.args and isinstance(expr.args[0],ast.Constant) else None
+                    title=(expr.args[1].value if len(expr.args)>1 and
+                           isinstance(expr.args[1],ast.Constant) else None)
+                    known[stmt.targets[0].id]=self.inputs.get(str(title),default) if inputs else default
+        for stmt in self.body:
+            for node in ast.walk(stmt):
+                if isinstance(node,ast.Call) and _function_name(node.func) in (
+                    "ta.sma","ta.ema","ta.rsi","ta.highest","ta.lowest","ta.change"):
+                    arg=node.args[1] if len(node.args)>1 else None
+                    value=(arg.value if isinstance(arg,ast.Constant) else
+                           known.get(arg.id) if isinstance(arg,ast.Name) else
+                           1 if arg is None and _function_name(node.func)=="ta.change" else None)
+                    if type(value) is int and value>=1:
+                        periods.append(value)
+                    else:
+                        dynamic=True
+        # Dynamic lookbacks cannot be guaranteed bounded without a declared
+        # max; full-history mode still supports them.
+        self.streaming_window=None if dynamic else max(
+            500,self.history_depth+2,max(periods,default=1)+110)
         if inputs and (not isinstance(inputs, dict) or len(inputs) > 30):
             raise ValueError('Pine inputs must be an object of at most 30 entries')
         self.inputs = inputs or {}

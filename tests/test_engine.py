@@ -148,3 +148,16 @@ strategy.exit("XL","L",stop=95,limit=115)
                      Risk(product_type="spot",fee_bps=0,slippage_bps=0))
     assert got['closed_trades'][0]['exit_price']==120
     assert got['closed_trades'][0]['reason']=='take_profit_limit'
+
+
+def test_streaming_engine_matches_full_simple_strategy():
+    from unibacktest.engine import run_backtest
+    candles=bars([100+(i%23)*.1 for i in range(3000)])
+    risk=Risk(product_type="spot",fee_bps=0,slippage_bps=0)
+    full=run_backtest(candles,BuiltinStrategy("sma_cross",{"fast":10,"slow":30}),risk)
+    stream=run_backtest(iter(candles),BuiltinStrategy("sma_cross",{"fast":10,"slow":30}),risk,streaming=True)
+    assert stream["bars"]==len(candles)
+    assert stream["streaming_preview_only"]
+    assert len(stream["equity"])<=2000
+    assert stream["metrics"]["final_equity"]==pytest.approx(full["metrics"]["final_equity"])
+    assert stream["metrics"]["max_drawdown_pct"]==pytest.approx(full["metrics"]["max_drawdown_pct"],abs=.001)

@@ -61,9 +61,31 @@ def execute(config: dict, store: Store | None = None, save: bool = True,
             incremental: bool = False) -> dict:
     store = store or Store()
     req, risk = prepare(config)
-    bars, coverage, warnings = load_bars(req, store, bool(config.get("refresh", False)), incremental)
     strat = create_strategy(config.get("strategy", {"type":"builtin","name":"sma_cross"}))
-    result = run_backtest(bars, strat, risk, req.timeframe)
+    streaming = bool(config.get("streaming",False))
+    if streaming:
+        if getattr(strat,"streaming_window",500) is None:
+            raise ValueError("Pine streaming requires fixed/input lookbacks; use full-history mode for dynamic lengths")
+        # Always prefer cached, cursor-backed input. Initial provider download
+        # is still materialized by the adapter; large ingestion needs a separate
+        # checkpointed importer and/or Parquet adapter.
+        summary=store.data_summary(req)
+        fetched=0
+        if not summary["count"] or config.get("refresh") or incremental:
+            incoming=fetch(req)
+            now=int(datetime.now(timezone.utc).timestamp()*1000)
+            incoming=[b for b in incoming if b.ts+INTERVALS[req.timeframe]<=now]
+            fetched=store.upsert_bars(req.cache_key(),incoming)
+            summary=store.data_summary(req)
+        if summary["count"]<2:
+            raise ValueError("Not enough historical bars")
+        coverage={**summary,"newly_fetched_bars":fetched,
+                  "cached_bars":summary["count"],"streaming_from_sqlite":True}
+        warnings=[]
+        bars=store.iter_bars(req)
+    else:
+        bars, coverage, warnings = load_bars(req, store, bool(config.get("refresh", False)), incremental)
+    result = run_backtest(bars, strat, risk, req.timeframe, streaming=streaming)
     if risk.product_type == "perp" and result["funding_data_points"] == 0:
         warnings.append("NO HISTORICAL FUNDING: rate assumed zero! Import funding_rate via CSV for credible perpetual P&L.")
     if risk.product_type == "equity":

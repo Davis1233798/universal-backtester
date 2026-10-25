@@ -58,6 +58,28 @@ class Store:
                 (req.cache_key(), iso_ms(req.start), iso_ms(req.end))).fetchall()
         return [Bar(**dict(r)) for r in rows]
 
+    def iter_bars(self, req: DataRequest, page_size: int = 8192):
+        """Bounded SQLite cursor: original timestamp-sorted bars, no fetchall."""
+        if page_size < 1:
+            raise ValueError("page_size must be positive")
+        with self.connect() as db:
+            cursor = db.execute("""SELECT ts,open,high,low,close,volume,funding_rate
+                FROM candles WHERE source_key=? AND ts>=? AND ts<? ORDER BY ts""",
+                (req.cache_key(), iso_ms(req.start), iso_ms(req.end)))
+            while True:
+                chunk = cursor.fetchmany(page_size)
+                if not chunk:
+                    break
+                for row in chunk:
+                    yield Bar(**dict(row))
+
+    def data_summary(self, req: DataRequest) -> dict:
+        with self.connect() as db:
+            row=db.execute("""SELECT COUNT(*) AS n, MIN(ts) AS first_ts, MAX(ts) AS last_ts
+                               FROM candles WHERE source_key=? AND ts>=? AND ts<?""",
+                           (req.cache_key(), iso_ms(req.start), iso_ms(req.end))).fetchone()
+        return {"count":row["n"],"first_ts":row["first_ts"],"last_ts":row["last_ts"]}
+
     def last_ts(self, req: DataRequest) -> int | None:
         with self.connect() as db:
             row = db.execute("SELECT MAX(ts) FROM candles WHERE source_key=?", (req.cache_key(),)).fetchone()
