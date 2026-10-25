@@ -14,6 +14,8 @@ services:
         value: "1"
       - key: UBT_ALLOW_EXEC
         value: "0"
+      - key: UBT_API_TOKEN
+        value: ""
       - key: UBT_DB
         value: /tmp/universal-backtester-demo.sqlite3
       - key: PORT

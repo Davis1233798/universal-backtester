@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import math
 import os
+import secrets
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .adapters import synthetic
@@ -23,7 +24,8 @@ from .service import execute, prepare
 from .storage import Store
 from .strategies import create_strategy
 
-app = FastAPI(title="Universal Backtester", version="0.1.0")
+app = FastAPI(title="Universal Backtester", version="0.1.0",
+              docs_url=None, redoc_url=None, openapi_url=None)
 _demo_slots = threading.BoundedSemaphore(value=2)
 
 
@@ -34,6 +36,38 @@ def public_demo() -> bool:
 def private_only():
     if public_demo():
         raise HTTPException(403, "Public demo does not expose stored runs or scheduler jobs")
+
+
+
+@app.middleware("http")
+async def enforce_api_access(request: Request, call_next):
+    """Fail closed for every current or future API endpoint.
+
+    Explicit PUBLIC demo allows only synthetic execution and metadata.
+    Everything else needs a >=32 character secret and exact Bearer token.
+    """
+    path=request.url.path
+    if path.startswith("/api/") and path != "/api/health":
+        if public_demo():
+            safe=(path=="/api/sources" and request.method=="GET" or
+                  path=="/api/backtests" and request.method=="POST")
+            if not safe:
+                return JSONResponse({"detail":"Not available in public demo"},status_code=403)
+        else:
+            expected=os.environ.get("UBT_API_TOKEN","")
+            if len(expected)<32:
+                return JSONResponse({"detail":"Private API locked: configure UBT_API_TOKEN (32+ characters)"},status_code=503)
+            authorization=request.headers.get("authorization","")
+            if (not authorization.startswith("Bearer ") or
+                not secrets.compare_digest(authorization[7:],expected)):
+                return JSONResponse({"detail":"Bearer authentication required"},status_code=401,
+                                    headers={"WWW-Authenticate":"Bearer"})
+    response=await call_next(request)
+    if path.startswith("/api/"):
+        response.headers["Cache-Control"]="no-store"
+    response.headers["X-Content-Type-Options"]="nosniff"
+    response.headers["Referrer-Policy"]="no-referrer"
+    return response
 
 
 class BacktestPayload(BaseModel):

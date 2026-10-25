@@ -1,6 +1,10 @@
 services:
   api:
     build: .
+    environment:
+      UBT_API_TOKEN: ${UBT_API_TOKEN:?Create a 32+ character UBT_API_TOKEN in your local .env before starting the API}
+      UBT_PUBLIC_DEMO: "0"
+      UBT_ALLOW_EXEC: "0"
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
