@@ -76,7 +76,7 @@ def _check_expr(node: ast.AST, names: set[str], budget: list[int]):
         _check_expr(node.test, names, budget)
         _check_expr(node.body, names, budget)
         _check_expr(node.orelse, names, budget)
-    elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and type(node.slice.value) is int and 0 <= node.slice.value <= 500:
+    elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and type(node.slice.value) is int and 0 <= node.slice.value:
         _check_expr(node.value, names, budget)
     else:
         raise ValueError(f'Unsupported Pine syntax: {node.__class__.__name__}')
@@ -154,7 +154,12 @@ def parse_pine(code: str) -> tuple[list[ast.stmt], set[str]]:
 class PineSubsetStrategy:
     """Stateless-safe parser; persistent state only in this in-memory backtest instance."""
     def __init__(self, code: str, inputs: dict | None = None):
+        self.history_all = True
         self.body, self.persistent = parse_pine(code)
+        self.history_depth = max(
+            (node.slice.value for statement in self.body for node in ast.walk(statement)
+             if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
+             and type(node.slice.value) is int), default=0) + 1
         if inputs and (not isinstance(inputs, dict) or len(inputs) > 30):
             raise ValueError('Pine inputs must be an object of at most 30 entries')
         self.inputs = inputs or {}
@@ -173,8 +178,8 @@ class PineSubsetStrategy:
 
     def _value(self, expr: ast.AST, offset=0, depth=0):
         self._limit()
-        if depth > 24 or offset > 500:
-            raise ValueError('Pine expression depth / lookback limit exceeded')
+        if depth > 24 or offset < 0:
+            raise ValueError('Pine expression depth exceeded or negative lookback')
         at = lambda n, off=offset: self._value(n, off, depth+1)
         if isinstance(expr, ast.Constant): return expr.value
         if isinstance(expr, ast.Name):
@@ -251,8 +256,8 @@ class PineSubsetStrategy:
                 if name == 'input.bool':
                     if not isinstance(answer,bool): raise ValueError('Pine boolean input must be true/false')
                     return answer
-                if name == 'input.int' and (type(answer) is not int or not 1 <= answer <= 500):
-                    raise ValueError('Pine integer input must be 1..500')
+                if name == 'input.int' and (type(answer) is not int or answer < 1):
+                    raise ValueError('Pine integer input must be positive')
                 if name == 'input.float' and (isinstance(answer,bool) or not isinstance(answer,(float,int)) or not math.isfinite(answer)):
                     raise ValueError('Pine float input must be finite')
                 return answer
@@ -267,8 +272,8 @@ class PineSubsetStrategy:
             if name in ('ta.sma','ta.ema','ta.highest','ta.lowest','ta.rsi'):
                 if len(expr.args) != 2: raise ValueError(f'{name} requires 2 arguments')
                 period = at(expr.args[1])
-                if type(period) not in (int,float) or not math.isfinite(period) or int(period) != period or not 1<=period<=500:
-                    raise ValueError('Pine lookback must be integer 1..500')
+                if type(period) not in (int,float) or not math.isfinite(period) or int(period) != period or period < 1:
+                    raise ValueError('Pine lookback must be a positive integer')
                 n = int(period)
                 if name == 'ta.rsi':
                     if n < 2: raise ValueError('RSI requires period >= 2')
@@ -294,7 +299,7 @@ class PineSubsetStrategy:
             if name == 'ta.change':
                 if len(expr.args) not in (1,2): raise ValueError('ta.change requires 1 or 2 arguments')
                 lookback=at(expr.args[1]) if len(expr.args)==2 else 1
-                if type(lookback) is not int or not 1<=lookback<=500: raise ValueError('Invalid change lookback')
+                if type(lookback) is not int or lookback < 1: raise ValueError('Invalid change lookback')
                 x,old=at(expr.args[0]),at(expr.args[0],offset+lookback)
                 return x-old if x is not None and old is not None else None
             if name in ('na','nz'):
@@ -342,7 +347,7 @@ class PineSubsetStrategy:
         for name, value in self.variables.items():
             h=self.history.setdefault(name,[])
             h.append(value)
-            if len(h)>501: del h[:-501]
+            if len(h)>self.history_depth: del h[:-self.history_depth]
         return self.target
 
     def close(self):

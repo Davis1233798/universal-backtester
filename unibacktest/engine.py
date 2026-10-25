@@ -2,7 +2,28 @@
 from __future__ import annotations
 import math
 from dataclasses import asdict
+from collections.abc import Sequence
 from .model import Bar, Risk, INTERVALS, normalize
+
+
+class _HistoricalBars(Sequence):
+    """O(1) read-only as-of history view; no materialization of prior bars."""
+    def __init__(self, bars: list[Bar], end: int):
+        self._bars, self._end = bars, end
+
+    def __len__(self):
+        return self._end
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self._bars[i].to_dict() for i in range(*index.indices(self._end))]
+        if not isinstance(index, int):
+            raise TypeError("bar index must be int or slice")
+        if index < 0:
+            index += self._end
+        if index < 0 or index >= self._end:
+            raise IndexError(index)
+        return self._bars[index].to_dict()
 
 
 def _metrics(equity: list[dict], closed: list[dict], fees: float, funding: float,
@@ -211,7 +232,9 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
                 recent.pop(0)
             if i == len(bars)-1 or stopped_out:
                 continue
-            ctx = {"bars": list(recent), "target": live_target, "position": position,
+            context_bars = (_HistoricalBars(bars, i+1)
+                            if getattr(strategy, "history_all", False) else list(recent))
+            ctx = {"bars": context_bars, "target": live_target, "position": position,
                    "wallet": wallet, "equity": current_equity, "timeframe": timeframe}
             target = float(strategy(ctx))
             if not math.isfinite(target) or not -1 <= target <= 1:

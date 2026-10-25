@@ -106,3 +106,34 @@ def test_public_pine_api_works_without_exec(monkeypatch,tmp_path):
     body['strategy']['code']='strategy("X")\nimport os\nstrategy.entry("L",strategy.long)'
     assert client.post('/api/backtests',json=body).status_code==422
     assert client.get('/api/markets?provider=ccxt&q=BTC&exchange=binance').status_code==403
+
+def test_pine_lookback_beyond_five_hundred():
+    from unibacktest.engine import run_backtest
+    from unibacktest.model import Bar, Risk
+    day=86400000
+    bars=[Bar(i*day,100.,100.,100.,100.,1.) for i in range(1205)]
+    script='''//@version=6
+strategy("Deep history")
+long_average = ta.sma(close, 1001)
+if not na(long_average) and close[1000] > 0
+    strategy.entry("L", strategy.long)
+'''
+    res=run_backtest(bars,PineSubsetStrategy(script),
+                     Risk(product_type="spot",fee_bps=0,slippage_bps=0))
+    assert res['bars']==1205
+    assert res['fills'][0]['ts']==1001*day
+
+
+def test_pine_long_variable_history():
+    from unibacktest.engine import run_backtest
+    from unibacktest.model import Bar, Risk
+    day=86400000
+    candles=[Bar(i*day,100+i*.01,100+i*.01,100+i*.01,100+i*.01,1.) for i in range(1006)]
+    script='''//@version=6
+strategy("Variable history")
+v = close
+if not na(v[1000]) and v > v[1000]
+    strategy.entry("L", strategy.long)
+'''
+    out=run_backtest(candles,PineSubsetStrategy(script),Risk(product_type="spot",fee_bps=0,slippage_bps=0))
+    assert out['fills'][0]['ts']==1001*day
