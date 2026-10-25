@@ -308,6 +308,66 @@ def backtests_batch(payload: dict):
         raise HTTPException(422, detail=str(exc)) from exc
 
 
+class CandleLoadPayload(BaseModel):
+    data: dict = Field(default_factory=dict)
+    refresh: bool = False
+    max_points: int = 1500
+
+
+@app.post("/api/candles/load")
+def load_market_candles(payload: CandleLoadPayload):
+    """Authenticated real-market chart loading. Populate historical cache on demand.
+
+    Chart aggregation never changes the historical bars supplied to backtests.
+    Unlike the read-only /api/candles endpoint, this fetches missing market data.
+    """
+    private_only()
+    from .chart import read_candles
+    from .service import load_bars
+    from .model import INTERVALS, iso_ms
+    import time
+    try:
+        req = DataRequest(**payload.data)
+        req.validate()
+        if req.provider == "demo":
+            raise ValueError("Production market charts require a real data source, not demo")
+        if req.provider not in ("ccxt", "hyperliquid", "yfinance", "csv"):
+            raise ValueError("Unsupported market chart source")
+        if not 10 <= payload.max_points <= 5000:
+            raise ValueError("max_points must be between 10 and 5000 (display only)")
+        store = Store()
+        summary = store.data_summary(req)
+        now = int(time.time()*1000)
+        target = min(iso_ms(req.end), now)
+        # Fill uncached history and refresh the trailing bars on a stale range.
+        needs_fetch = (payload.refresh or summary["count"] < 2 or
+                       (summary["last_ts"] is not None and
+                        summary["last_ts"] + 3*INTERVALS[req.timeframe] < target
+                        and req.provider != "csv"))
+        coverage = summary
+        warnings = []
+        if needs_fetch:
+            try:
+                _, coverage, warnings = load_bars(
+                    req, store, refresh=payload.refresh,
+                    incremental=bool(summary["count"] and not payload.refresh))
+            except (ValueError, RuntimeError, TimeoutError, ImportError, OSError) as exc:
+                # A previously stored partial range is usable for display only,
+                # but return the provider failure prominently to the client.
+                if summary["count"] < 2 or payload.refresh:
+                    raise
+                warnings.append("Live refresh failed; showing cached historical data: " + str(exc))
+        chart = read_candles(req, store, payload.max_points)
+        if not chart["candles"]:
+            raise ValueError("No market candles available for the selected symbol/date range")
+        return {**chart, "coverage": coverage, "warnings": warnings,
+                "provider": req.provider, "exchange": req.exchange,
+                "symbol": req.symbol, "timeframe": req.timeframe,
+                "cached": not needs_fetch}
+    except (ValueError, RuntimeError, TimeoutError, ImportError, OSError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
 @app.get("/api/candles")
 def candles(provider: str, symbol: str, start: str, end: str,
             timeframe: str = "1d", exchange: str = "", market_type: str = "swap",
