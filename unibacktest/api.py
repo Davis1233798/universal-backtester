@@ -340,7 +340,15 @@ def load_market_candles(payload: CandleLoadPayload):
         now = int(time.time()*1000)
         target = min(iso_ms(req.end), now)
         # Fill uncached history and refresh the trailing bars on a stale range.
-        needs_fetch = (payload.refresh or summary["count"] < 2 or
+        # A newly expanded left-hand chart range must fetch older candles.
+        # A cache hit for the recent tail is not evidence of full history.
+        # Stock calendars allow a wider tolerance around non-trading days.
+        tolerance = max(2*INTERVALS[req.timeframe],
+                        4*86400000 if req.provider == "yfinance" else 0)
+        needs_backfill = (summary["count"] >= 2 and
+                          summary["first_ts"] is not None and
+                          summary["first_ts"] > iso_ms(req.start) + tolerance)
+        needs_fetch = (payload.refresh or needs_backfill or summary["count"] < 2 or
                        (summary["last_ts"] is not None and
                         summary["last_ts"] + 3*INTERVALS[req.timeframe] < target
                         and req.provider != "csv"))
@@ -349,8 +357,9 @@ def load_market_candles(payload: CandleLoadPayload):
         if needs_fetch:
             try:
                 _, coverage, warnings = load_bars(
-                    req, store, refresh=payload.refresh,
-                    incremental=bool(summary["count"] and not payload.refresh))
+                    req, store, refresh=(payload.refresh or needs_backfill),
+                    incremental=bool(summary["count"] and
+                                     not payload.refresh and not needs_backfill))
             except (ValueError, RuntimeError, TimeoutError, ImportError, OSError) as exc:
                 # A previously stored partial range is usable for display only,
                 # but return the provider failure prominently to the client.

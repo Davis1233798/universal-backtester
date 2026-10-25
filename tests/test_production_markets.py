@@ -76,3 +76,27 @@ def test_production_frontend_defaults_to_real_venue_and_has_discovery():
     assert "exchange:'okx'" in app
     assert "provider:'hyperliquid'" in app
     assert "provider:'yfinance'" in app
+
+
+def test_extending_range_backwards_fetches_older_market_history(monkeypatch,tmp_path):
+    monkeypatch.delenv("UBT_PUBLIC_DEMO",raising=False)
+    monkeypatch.setenv("UBT_DB",str(tmp_path/"range-extension.sqlite3"))
+    called=[]
+    def fake_fetch(req):
+        called.append(req.start)
+        ts=iso_ms(req.start)
+        return [Bar(ts+i*3600000,100,101,99,100.5,5) for i in range(24)]
+    monkeypatch.setattr("unibacktest.service.fetch",fake_fetch)
+    client=TestClient(app,headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
+    one=_request("ETH/USDT:USDT")
+    one["data"]["start"]="2024-01-02"
+    one["data"]["end"]="2024-01-03"
+    first=client.post("/api/candles/load",json=one)
+    assert first.status_code==200,first.text
+    assert first.json()["represented_bars"]==24
+    two=_request("ETH/USDT:USDT")
+    two["data"]["end"]="2024-01-03"
+    second=client.post("/api/candles/load",json=two)
+    assert second.status_code==200,second.text
+    assert second.json()["represented_bars"]==48
+    assert called==["2024-01-02","2024-01-01"]

@@ -150,7 +150,8 @@ export default function App(){
  }
  async function lookupMarkets(){setMarketBusy(true);setError('');
   try{if(isDemo)throw new Error('公開示範沒有真實交易所市場搜尋');
-    const q=new URLSearchParams({provider:config.data.provider,exchange:config.data.exchange,market_type:config.data.market_type,q:marketQuery.trim()||'USDT',limit:'60'});
+    const q=new URLSearchParams({provider:config.data.provider,exchange:config.data.exchange,market_type:config.data.market_type,q:marketQuery.trim()||(config.data.provider==='hyperliquid'?'BTC':
+      config.data.provider==='yfinance'?'AAPL':'USDT'),limit:'60'});
     const out=await client.get<{items:typeof marketMatches;matched_count:number}>('/api/markets?'+q.toString());setMarketMatches(out.items||[]);
     setNotice(`找到 ${out.matched_count||0} 筆市場，以下顯示最多 60 筆`);
   }catch(e){setError((e as Error).message)}finally{setMarketBusy(false)}
