@@ -83,9 +83,13 @@ def demo_backtest(config: dict) -> dict:
     if risk.initial_cash > 10_000_000 or risk.leverage > 20:
         raise ValueError("Public demo allows at most 10m starting capital and 20x leverage")
     count = (iso_ms(req.end) - iso_ms(req.start)) // INTERVALS[req.timeframe]
-    max_bars = 700 if strategy.get("type") == "pine" else 1500
-    if not 2 <= count <= max_bars:
-        raise ValueError(f"Public demo supports 2 to {max_bars:,} candles per run")
+    # Only the public synthetic demonstration has a configurable CPU/resource
+    # budget. Real market history is never clipped by this setting.
+    budget = int(os.environ.get("UBT_PUBLIC_DEMO_MAX_BARS", "50000"))
+    if not 2 <= count <= budget:
+        raise ValueError(
+            f"Public demo resource budget: {budget:,} synthetic candles per request. "
+            "This is not a historical data cutoff in the private/full engine.")
     bars = synthetic(req)
     if len(bars) < 2:
         raise ValueError("Not enough candles")
