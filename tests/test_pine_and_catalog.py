@@ -36,7 +36,7 @@ def test_pine_subset_rejects_unsafe_code():
 
 def test_pine_subset_rejects_unknown_trade_functions():
     with pytest.raises(ValueError,match='Unsupported Pine statement'):
-        PineSubsetStrategy('strategy("X")\nstrategy.exit("L", "L", stop=10)')
+        PineSubsetStrategy('strategy("X")\nstrategy.cancel("L")')
 
 def test_pine_backtest_on_demo_data(tmp_path):
     cfg={'data':{'provider':'demo','symbol':'DEMO','start':'2024-01-01','end':'2024-07-01'},
