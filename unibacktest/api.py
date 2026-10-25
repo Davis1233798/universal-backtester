@@ -94,6 +94,8 @@ def demo_backtest(config: dict) -> dict:
     if len(bars) < 2:
         raise ValueError("Not enough candles")
     result = run_backtest(bars, create_strategy(strategy), risk, req.timeframe)
+    from .chart import preview_candles
+    result["candles_preview"] = preview_candles(bars, 900)
     result["run_id"] = "demo-not-saved"
     result["warnings"] = [
         "PUBLIC DEMO: simulated candles, not real exchange prices; results are not market performance.",
@@ -164,13 +166,14 @@ def backtests_batch(payload: dict):
 @app.get("/api/candles")
 def candles(provider: str, symbol: str, start: str, end: str,
             timeframe: str = "1d", exchange: str = "", market_type: str = "swap",
-            max_points: int = 1200):
+            max_points: int = 1200, include_funding: bool = False):
     """Query downsampled K lines for chart display only."""
     private_only()
     from .chart import read_candles
     try:
         req = DataRequest(provider=provider, exchange=exchange, symbol=symbol,
-                          timeframe=timeframe, start=start, end=end, market_type=market_type)
+                          timeframe=timeframe, start=start, end=end,
+                          market_type=market_type, include_funding=include_funding)
         return read_candles(req, Store(), max_points=max_points)
     except (ValueError, RuntimeError, PermissionError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
