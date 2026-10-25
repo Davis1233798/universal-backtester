@@ -17,14 +17,16 @@ class _HistoricalBars(Sequence):
 
     def __getitem__(self, index):
         if isinstance(index, slice):
-            return [self._bars[i].to_dict() for i in range(*index.indices(self._end))]
+            return [self._bars[i] if isinstance(self._bars[i], dict) else self._bars[i].to_dict()
+                    for i in range(*index.indices(self._end))]
         if not isinstance(index, int):
             raise TypeError("bar index must be int or slice")
         if index < 0:
             index += self._end
         if index < 0 or index >= self._end:
             raise IndexError(index)
-        return self._bars[index].to_dict()
+        item=self._bars[index]
+        return item if isinstance(item, dict) else item.to_dict()
 
 
 
