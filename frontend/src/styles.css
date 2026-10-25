@@ -33,3 +33,8 @@
  .market-quick{gap:5px}
  .market-quick .time-chip{height:34px}
 }
+
+.market-venues{display:flex;flex-wrap:wrap;gap:7px;border-bottom:1px solid #24384b;padding-bottom:11px}
+.market-venues .time-chip{min-width:70px;height:31px;border:1px solid #32475b;background:#132536;border-radius:6px;color:#a6bbce;padding:0 10px}
+.market-venues .time-chip.active{background:#20554b;color:#65e0bb;border-color:#3d9a82}
+@media(max-width:650px){.market-venues .time-chip{flex:1 1 auto;min-width:70px}}

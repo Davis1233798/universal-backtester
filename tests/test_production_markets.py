@@ -72,3 +72,7 @@ def test_production_frontend_defaults_to_real_venue_and_has_discovery():
     assert "client.post<" in app and "'/api/candles/load'" in app
     assert "搜尋交易所所有上市商品" in app
     assert "['BTC','ETH','SOL','XRP','DOGE'" in app
+    assert "exchange:'bybit'" in app
+    assert "exchange:'okx'" in app
+    assert "provider:'hyperliquid'" in app
+    assert "provider:'yfinance'" in app

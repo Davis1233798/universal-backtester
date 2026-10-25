@@ -261,6 +261,28 @@ export default function App(){
              </div></label>
              <span className="market-hint">從交易所即時商品目錄搜尋，沒有 BTC 單幣限制。</span>
             </div>
+            <div className="market-venues" aria-label="切換真實行情供應商與交易所">
+              {([
+                {name:'Binance',provider:'ccxt',exchange:'binanceusdm'},
+                {name:'Bybit',provider:'ccxt',exchange:'bybit'},
+                {name:'OKX',provider:'ccxt',exchange:'okx'},
+                {name:'Hyperliquid',provider:'hyperliquid',exchange:''},
+                {name:'全球股票',provider:'yfinance',exchange:''}
+              ] as const).map(venue=><button key={venue.name} type="button"
+                className={'time-chip '+(config.data.provider===venue.provider &&
+                  config.data.exchange===venue.exchange?'active':'')}
+                onClick={()=>{
+                  const stock=venue.provider==='yfinance',dex=venue.provider==='hyperliquid';
+                  const base=(config.data.symbol.split(/[/:]/)[0]||'BTC').toUpperCase();
+                  const nextBase=['BTC','ETH','SOL','XRP','DOGE','ADA','BNB','LINK','LTC','AVAX'].includes(base)?base:'BTC';
+                  updateData({provider:venue.provider,exchange:venue.exchange,
+                    symbol:stock?'AAPL':dex?nextBase:nextBase+'/USDT:USDT',
+                    market_type:stock?'spot':'swap',include_funding:false});
+                  updateRisk({product_type:stock?'equity':'perp',market:stock?'stock':'crypto',
+                    leverage:stock?1:config.risk.leverage});
+                  setMarketMatches([]);setMarketQuery('');
+                }}>{venue.name}</button>)}
+            </div>
             <div className="market-quick">
              {(config.data.provider==='yfinance'
                ?['AAPL','NVDA','TSLA','MSFT','2330.TW']
