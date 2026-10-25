@@ -146,6 +146,32 @@ def markets(provider: str, q: str, exchange: str = "",
         raise HTTPException(422, detail=str(err)) from err
 
 
+@app.post("/api/backtests/batch")
+def backtests_batch(payload: dict):
+    """Run common strategy independently across multiple exchanges/DEX venues."""
+    private_only()
+    from .batch import run_multi_market
+    try:
+        return run_multi_market(payload)
+    except (ValueError, RuntimeError, PermissionError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
+@app.get("/api/candles")
+def candles(provider: str, symbol: str, start: str, end: str,
+            timeframe: str = "1d", exchange: str = "", market_type: str = "swap",
+            max_points: int = 1200):
+    """Query downsampled K lines for chart display only."""
+    private_only()
+    from .chart import read_candles
+    try:
+        req = DataRequest(provider=provider, exchange=exchange, symbol=symbol,
+                          timeframe=timeframe, start=start, end=end, market_type=market_type)
+        return read_candles(req, Store(), max_points=max_points)
+    except (ValueError, RuntimeError, PermissionError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
 @app.post("/api/backtests")
 def backtest(payload: BacktestPayload):
     try:
