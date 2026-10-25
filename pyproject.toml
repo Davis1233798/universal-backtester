@@ -22,4 +22,4 @@ ubt = "unibacktest.cli:main"
 include = ["unibacktest*"]
 
 [tool.setuptools.package-data]
-unibacktest = ["static/*.html"]
+unibacktest = ["static/*.html", "static/app/*.html", "static/app/assets/*"]

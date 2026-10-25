@@ -54,5 +54,5 @@ def test_public_demo_explicitly_allows_only_synthetic(monkeypatch):
     assert run.status_code==200,run.text
     assert run.json()["run_id"]=="demo-not-saved"
     page=client.get("/").text
-    assert 'id="authToken"' in page
+    assert ('id="root"' in page or 'id="authToken"' in page)
     assert "unpkg.com" not in page

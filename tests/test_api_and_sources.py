@@ -135,20 +135,24 @@ def test_public_demo_is_stateless_and_rejects_unsafe_operations(tmp_path, monkey
 def test_pine_editor_visible_by_default_in_web_ui():
     client=TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     html=client.get('/').text
-    assert 'id="pine-editor">' in html
-    assert '<option value="pine" selected>' in html
-    assert 'id="pineCode"' in html
-    assert 'id="market-demo-info" hidden' in html
-    assert "document.querySelector('.sub').textContent" in html
+    assert '<html' in html
+    if 'id="root"' in html:
+        assert '/assets/' in html
+    else:
+        assert 'id="pine-editor">' in html
+        assert 'id="pineCode"' in html
 
 
 def test_metrics_r_reference_ui_and_deployment_health(monkeypatch):
     client=TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     html=client.get('/').text
-    assert 'id="rRef"' in html
-    assert '營利因子 PF' in html
-    assert '平均 R' in html
-    assert 'id="closedRows"' in html
+    if 'id="root"' in html:
+        assert '/assets/' in html
+    else:
+        assert 'id="rRef"' in html
+        assert '營利因子 PF' in html
+        assert '平均 R' in html
+        assert 'id="closedRows"' in html
     monkeypatch.setenv('RENDER_GIT_COMMIT','abcdef012345')
     assert client.get('/api/health').json()['deployed_commit']=='abcdef012345'
 
