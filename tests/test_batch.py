@@ -44,3 +44,25 @@ def test_multi_market_errors_isolated(monkeypatch,tmp_path):
     assert result['successful']==1
     assert result['failed']==1
     assert result['results'][1]['status']=='error'
+
+
+def test_batch_api_private_and_public_guard(monkeypatch,tmp_path):
+    from fastapi.testclient import TestClient
+    from unibacktest.api import app
+    import unibacktest.storage as storage
+    monkeypatch.setenv('UBT_DB', str(tmp_path/'api.sqlite3'))
+    monkeypatch.setattr(storage, 'DEFAULT_DB', str(tmp_path/'api.sqlite3'))
+    monkeypatch.delenv('UBT_PUBLIC_DEMO',raising=False)
+    client=TestClient(app)
+    cfg={'markets':[{'provider':'demo','symbol':'API1','start':'2024-01-01','end':'2024-02-01'},
+                    {'provider':'demo','symbol':'API2','start':'2024-01-01','end':'2024-02-01'}],
+         'workers':2,'risk':{'product_type':'spot','fee_bps':0}}
+    out=client.post('/api/backtests/batch',json=cfg)
+    assert out.status_code==200,out.text
+    assert out.json()['successful']==2
+    view=client.get('/api/candles',params={'provider':'demo','symbol':'API1','start':'2024-01-01','end':'2024-02-01'})
+    assert view.status_code==200,view.text
+    assert view.json()['represented_bars']>20
+    monkeypatch.setenv('UBT_PUBLIC_DEMO','1')
+    assert client.post('/api/backtests/batch',json=cfg).status_code==403
+    assert client.get('/api/candles',params={'provider':'demo','symbol':'API1','start':'2024-01-01','end':'2024-02-01'}).status_code==403
