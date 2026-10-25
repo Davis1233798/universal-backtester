@@ -23,6 +23,8 @@ def _request(symbol="ETH/USDT:USDT"):
 def test_real_market_chart_populates_cache_and_accepts_eth_sol(monkeypatch,tmp_path):
     monkeypatch.delenv("UBT_PUBLIC_DEMO",raising=False)
     monkeypatch.setenv("UBT_DB",str(tmp_path/"production-candles.sqlite3"))
+    import unibacktest.storage as storage
+    monkeypatch.setattr(storage,"DEFAULT_DB",str(tmp_path/"production-candles.sqlite3"))
     requests=[]
     def fake_fetch(req):
         requests.append(req.symbol)
@@ -54,6 +56,8 @@ def test_real_market_chart_populates_cache_and_accepts_eth_sol(monkeypatch,tmp_p
 
 def test_chart_loader_rejects_public_and_unauthorized(monkeypatch,tmp_path):
     monkeypatch.setenv("UBT_DB",str(tmp_path/"guard.sqlite3"))
+    import unibacktest.storage as storage
+    monkeypatch.setattr(storage,"DEFAULT_DB",str(tmp_path/"guard.sqlite3"))
     monkeypatch.delenv("UBT_PUBLIC_DEMO",raising=False)
     client=TestClient(app)
     assert client.post("/api/candles/load",json=_request()).status_code==401
@@ -81,6 +85,8 @@ def test_production_frontend_defaults_to_real_venue_and_has_discovery():
 def test_extending_range_backwards_fetches_older_market_history(monkeypatch,tmp_path):
     monkeypatch.delenv("UBT_PUBLIC_DEMO",raising=False)
     monkeypatch.setenv("UBT_DB",str(tmp_path/"range-extension.sqlite3"))
+    import unibacktest.storage as storage
+    monkeypatch.setattr(storage,"DEFAULT_DB",str(tmp_path/"range-extension.sqlite3"))
     called=[]
     def fake_fetch(req):
         called.append(req.start)
