@@ -15,6 +15,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .adapters import synthetic
@@ -26,6 +27,8 @@ from .strategies import create_strategy
 
 app = FastAPI(title="Universal Backtester", version="0.1.0",
               docs_url=None, redoc_url=None, openapi_url=None)
+# Vite bundles JavaScript and CSS locally; no remote JS CDN can read API tokens.
+app.mount("/assets", StaticFiles(directory=str(Path(__file__).resolve().parent / "static" / "app" / "assets"), check_dir=False), name="assets")
 _demo_slots = threading.BoundedSemaphore(value=2)
 
 
@@ -147,7 +150,10 @@ def demo_backtest(config: dict) -> dict:
 
 @app.get("/")
 def index():
-    return FileResponse(Path(__file__).resolve().parent / "static" / "index.html")
+    assets = Path(__file__).resolve().parent / "static"
+    modern = assets / "app" / "index.html"
+    chosen = modern if modern.is_file() else assets / "index.html"
+    return FileResponse(chosen, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @app.get("/api/health")
@@ -187,6 +193,81 @@ def markets(provider: str, q: str, exchange: str = "",
         return search_markets(provider, q, exchange, market_type, limit)
     except (ValueError, ImportError, RuntimeError) as err:
         raise HTTPException(422, detail=str(err)) from err
+
+
+@app.get("/api/strategies")
+def saved_strategies(limit: int = 100):
+    private_only()
+    from .library import list_strategies
+    try:
+        return list_strategies(Store(), limit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/strategies")
+def create_saved_strategy(payload: dict):
+    private_only()
+    from .library import save_strategy
+    try:
+        return save_strategy(Store(), payload)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/strategies/{strategy_id}")
+def saved_strategy(strategy_id: str):
+    private_only()
+    from .library import get_strategy
+    strategy = get_strategy(Store(), strategy_id)
+    if strategy is None:
+        raise HTTPException(404, "No such strategy")
+    return strategy
+
+
+@app.put("/api/strategies/{strategy_id}")
+def update_saved_strategy(strategy_id: str, payload: dict):
+    private_only()
+    from .library import save_strategy
+    try:
+        return save_strategy(Store(), payload, strategy_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/strategies/{strategy_id}")
+def delete_saved_strategy(strategy_id: str):
+    private_only()
+    from .library import delete_strategy
+    if not delete_strategy(Store(), strategy_id):
+        raise HTTPException(404, "No such strategy")
+    return {"deleted": True, "id": strategy_id}
+
+
+@app.get("/api/strategies/{strategy_id}/revisions")
+def saved_strategy_revisions(strategy_id: str, limit: int = 100):
+    private_only()
+    from .library import revisions, get_strategy
+    if get_strategy(Store(), strategy_id) is None:
+        raise HTTPException(404, "No such strategy")
+    try:
+        return revisions(Store(), strategy_id, limit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/strategies/{strategy_id}/restore/{revision}")
+def restore_saved_strategy(strategy_id: str, revision: int):
+    private_only()
+    from .library import restore_revision
+    try:
+        return restore_revision(Store(), strategy_id, revision)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.post("/api/portfolio/backtests")
