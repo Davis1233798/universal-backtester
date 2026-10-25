@@ -195,6 +195,22 @@ def markets(provider: str, q: str, exchange: str = "",
         raise HTTPException(422, detail=str(err)) from err
 
 
+@app.post("/api/strategies/generate")
+async def generate_strategy_draft(payload: dict):
+    """Server-side opt-in AI code generation; never auto-run or auto-save."""
+    private_only()
+    from .ai import generate_pine
+    try:
+        return await generate_pine(payload.get("description", ""))
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        # Do not leak provider credentials or private server internals.
+        raise HTTPException(502, "AI provider request failed") from exc
+
+
 @app.get("/api/strategies")
 def saved_strategies(limit: int = 100):
     private_only()
