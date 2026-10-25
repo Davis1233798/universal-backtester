@@ -53,6 +53,20 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 </div><div class="actions"><button id="go">執行回測</button><button class="secondary" id="schedule">新增每日任務</button></div><p class="status" id="status"></p></section>
 <section><h2>注意事項</h2><small>合成示範數據不是市場報價。合約資金費率需在 CSV 的 funding_rate 欄位提供；若缺少資金費率會提示警告。此版本不模擬限價撮合、組合保證金與逐筆成交；不提供實盤下單。服務僅供本機使用。</small></section>
 </div><div>
+<section><h2>跨交易所／DEX 並行比較</h2>
+<div id="batchPanel" hidden>
+<label>市場清單：每行 provider,exchange,symbol</label>
+<textarea id="batchMarkets" rows="5" style="width:100%;background:#101a2a;color:#edf5ff;border:1px solid #3b4e69;border-radius:8px;padding:8px">ccxt,binanceusdm,BTC/USDT:USDT
+ccxt,bybit,BTC/USDT:USDT
+hyperliquid,,BTC</textarea>
+<label>同時執行程序數（1–32）</label><input id="batchWorkers" type="number" min="1" max="32" value="3">
+<button id="batchRun" style="margin-top:8px">同策略並行回測</button>
+<p id="batchStatus" class="status"></p>
+<div class="table-scroll"><table><thead><tr><th>商品</th><th>狀態</th><th>根數</th><th>淨利</th><th>勝率 %</th><th>PF</th><th>平均 R</th></tr></thead><tbody id="batchRows"></tbody></table></div>
+<small>每間交易所獨立資金與風險；這不是共享資金的跨市場 Portfolio。大規模任務隊列與 Rust 核心仍待開發。</small>
+</div>
+<p id="batchNoAccess">公開示範模式禁止匿名查詢真實 CEX、DEX 和股票；並行比較只開放具存取控制的完整部署。</p>
+</section>
 <section><h2>績效總覽</h2><div id="metrics" class="grid"><div class="metric">尚未執行回測</div></div><p id="metricNotes" class="status">PF、勝率與平均 R 等指標將在回測後顯示。</p><div id="warnings"></div></section>
 <section><h2>資金曲線</h2><svg id="plot" viewBox="0 0 840 300" role="img" aria-label="Equity curve"><text x="30" y="145" fill="#95a8c4">執行回測後顯示資金曲線</text></svg></section>
 <section><h2>交易紀錄</h2><div class="table-scroll"><table><thead><tr><th>時間（UTC）</th><th>方向 / 數量</th><th>成交價</th><th>費用</th><th>原因</th></tr></thead><tbody id="fills"></tbody></table></div></section>
@@ -195,6 +209,35 @@ $('marketLookup').onclick=async()=>{
   finally{$('marketLookup').disabled=false;}
 };
 $('marketResults').onchange=()=>{if($('marketResults').value)$('symbol').value=$('marketResults').value;};
+$('batchRun').onclick=async()=>{
+  const button=$('batchRun'); button.disabled=true;
+  $('batchStatus').textContent='正在並行執行市場回測…';
+  try{
+    const cfg=config();
+    const markets=$('batchMarkets').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map((line,i)=>{
+      const parts=line.split(',').map(x=>x.trim());
+      if(parts.length!==3||!parts[0]||!parts[2])throw new Error('市場第 '+(i+1)+' 行格式錯誤');
+      return {data:{...cfg.data,provider:parts[0],exchange:parts[1],symbol:parts[2]}};
+    });
+    const result=await post('/api/backtests/batch',{
+      strategy:cfg.strategy,risk:cfg.risk,markets,
+      workers:Number($('batchWorkers').value),chart_points:1000,
+      refresh:cfg.refresh
+    });
+    $('batchRows').replaceChildren(...result.results.map(r=>{
+      const tr=document.createElement('tr'),m=r.result?.metrics||{};
+      [r.data.exchange+' '+r.data.symbol,r.status,r.result?.bars??'—',
+       m.net_profit??'—',m.win_rate_pct??'—',m.profit_factor??'—',
+       m.average_r??'—'].forEach(v=>{
+        const td=document.createElement('td');td.textContent=String(v);tr.appendChild(td);
+      });
+      if(r.error)tr.title=r.error;
+      return tr;
+    }));
+    $('batchStatus').textContent='完成：成功 '+result.successful+' 個；失敗 '+result.failed+' 個。';
+  }catch(e){$('batchStatus').textContent='錯誤：'+e.message;}
+  finally{button.disabled=false;}
+};
 $('reload').onclick=loadJobs;
 async function initialize(){
   if(location.hostname.endsWith('.onrender.com')){
@@ -210,6 +253,10 @@ async function initialize(){
       $('exchangeIDs').replaceChildren(...sources.ccxt_exchanges_installed.map(name=>{
         const e=document.createElement('option');e.value=name;return e;
       }));
+    }
+    if(!sources.public_demo){
+      $('batchPanel').hidden=false;
+      $('batchNoAccess').hidden=true;
     }
     if(sources.public_demo){
       for(const option of Array.from($('provider').options)){ if(option.value!=='demo') option.remove(); }
