@@ -38,6 +38,15 @@ jobs:
           python -m pip install -e '.[test]'
       - name: Compile Python code
         run: python -m compileall -q unibacktest tests
+      - name: Check browser JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          html=Path('unibacktest/static/index.html').read_text(encoding='utf-8')
+          body=html.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/ubt-inline-ui.js').write_text(body,encoding='utf-8')
+          PY
+          node --check /tmp/ubt-inline-ui.js
       - name: Run tests
         run: python -m pytest -q
       - name: Validate installed dependencies
