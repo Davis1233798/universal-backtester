@@ -66,3 +66,20 @@ def test_batch_api_private_and_public_guard(monkeypatch,tmp_path):
     monkeypatch.setenv('UBT_PUBLIC_DEMO','1')
     assert client.post('/api/backtests/batch',json=cfg).status_code==403
     assert client.get('/api/candles',params={'provider':'demo','symbol':'API1','start':'2024-01-01','end':'2024-02-01'}).status_code==403
+
+def test_high_worker_request_is_queued_not_rejected(monkeypatch,tmp_path):
+    monkeypatch.setenv('UBT_DB',str(tmp_path/'many-workers.sqlite3'))
+    monkeypatch.setenv('UBT_MAX_LOCAL_WORKERS','1')
+    out=run_multi_market({'workers':80, 'markets':[
+        {'provider':'demo','symbol':'A','start':'2024-01-01','end':'2024-02-01'},
+        {'provider':'demo','symbol':'B','start':'2024-01-01','end':'2024-02-01'}
+    ],'risk':{'product_type':'spot'}})
+    assert out['requested_workers']==80
+    assert out['active_local_workers']==1
+    assert out['successful']==2
+
+
+def test_invalid_local_worker_capacity(monkeypatch):
+    monkeypatch.setenv('UBT_MAX_LOCAL_WORKERS','0')
+    with pytest.raises(ValueError,match='positive'):
+        run_multi_market({'markets':[{'provider':'demo','symbol':'A'}]})

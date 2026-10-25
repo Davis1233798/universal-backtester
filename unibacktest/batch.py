@@ -77,8 +77,16 @@ def run_multi_market(config: dict) -> dict:
         parallelism = int(config.get("workers", min(4, os.cpu_count() or 1)))
     except (ValueError, TypeError) as exc:
         raise ValueError("workers must be an integer") from exc
-    if not (1 <= parallelism <= 32):
-        raise ValueError("workers must be within 1..32 (bounded CPU workers)")
+    if parallelism < 1:
+        raise ValueError("workers must be positive")
+    # Scheduler selects a safe local concurrency from available CPU capacity.
+    # No fixed global worker ceiling: larger jobs queue tasks on this process
+    # pool; distributed workers remain a separate deployment capability.
+    available_cpus = os.cpu_count() or 1
+    local_cap = int(os.environ.get("UBT_MAX_LOCAL_WORKERS", str(available_cpus)))
+    if local_cap < 1:
+        raise ValueError("UBT_MAX_LOCAL_WORKERS must be positive")
+    active_workers = min(parallelism, available_cpus, local_cap, len(markets))
     chart_points = int(config.get("chart_points", 1200))
     if not 4 <= chart_points <= 5000:
         raise ValueError("chart_points must be within 4..5000; preview only")
@@ -106,13 +114,15 @@ def run_multi_market(config: dict) -> dict:
     results: list[dict | None] = [None]*len(builds)
     # One process per worker, NOT one process per K line.
     # Failure of one venue should not drop all results.
-    with ProcessPoolExecutor(max_workers=min(parallelism, len(builds)),
+    with ProcessPoolExecutor(max_workers=active_workers,
                              mp_context=multiprocessing.get_context("spawn")) as pool:
         pending = [pool.submit(_one, i, cfg, chart_points) for i,cfg in enumerate(builds)]
         for job in as_completed(pending):
             outcome = job.result()
             results[outcome["index"]] = outcome
-    return {"count": len(results), "successful": sum(r["status"] == "success" for r in results),
+    return {"requested_workers": parallelism, "active_local_workers": active_workers,
+            "worker_capacity": min(available_cpus, local_cap),
+            "count": len(results), "successful": sum(r["status"] == "success" for r in results),
             "failed": sum(r["status"] == "error" for r in results),
             "independent_accounting": True,
             "shared_liquidity_or_portfolio": False,

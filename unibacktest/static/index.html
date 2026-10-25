@@ -59,7 +59,7 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 <textarea id="batchMarkets" rows="5" style="width:100%;background:#101a2a;color:#edf5ff;border:1px solid #3b4e69;border-radius:8px;padding:8px">ccxt,binanceusdm,BTC/USDT:USDT
 ccxt,bybit,BTC/USDT:USDT
 hyperliquid,,BTC</textarea>
-<label>同時執行程序數（1–32）</label><input id="batchWorkers" type="number" min="1" max="32" value="3">
+<label>要求並行程序數（按實際 CPU 與設定自動排隊）</label><input id="batchWorkers" type="number" min="1" value="3">
 <button id="batchRun" style="margin-top:8px">同策略並行回測</button>
 <p id="batchStatus" class="status"></p>
 <div class="table-scroll"><table><thead><tr><th>商品</th><th>狀態</th><th>根數</th><th>淨利</th><th>勝率 %</th><th>PF</th><th>平均 R</th></tr></thead><tbody id="batchRows"></tbody></table></div>
