@@ -64,6 +64,17 @@ hyperliquid,,BTC</textarea>
 <p id="batchStatus" class="status"></p>
 <div class="table-scroll"><table><thead><tr><th>商品</th><th>狀態</th><th>根數</th><th>淨利</th><th>勝率 %</th><th>PF</th><th>平均 R</th></tr></thead><tbody id="batchRows"></tbody></table></div>
 <small>每間交易所獨立資金與風險；這不是共享資金的跨市場 Portfolio。大規模任務隊列與 Rust 核心仍待開發。</small>
+<hr style="margin:20px 0;border:0;border-top:1px solid #34445a">
+<h3 style="font-size:16px">共同資金跨交易所價差策略（研究模式）</h3>
+<p><small>使用同一份市場清單與日期，市場時間戳必須完全對齊。支援同一商品各交易所同時持有多空，資金共同估值；不模擬跨平台資金轉移或各家交易所保證金制度。這不是 Pine 跨市場策略。</small></p>
+<div class="form">
+<div><label>進場價差（bps）</label><input id="portfolioEntry" type="number" value="25" min="0" step="1"></div>
+<div><label>離場價差（bps）</label><input id="portfolioExit" type="number" value="5" min="0" step="1"></div>
+<div class="span"><label>共同資金最大總名義曝險比例（0～1）</label><input id="portfolioGross" type="number" value="0.8" min="0.01" max="1" step="0.05"></div>
+</div>
+<button id="portfolioRun" class="secondary" style="margin-top:12px">執行共同資金價差回測</button>
+<p class="status" id="portfolioStatus"></p>
+<div class="grid" id="portfolioMetrics"></div>
 </div>
 <p id="batchNoAccess">公開示範模式禁止匿名查詢真實 CEX、DEX 和股票；並行比較只開放具存取控制的完整部署。</p>
 </section>
@@ -300,6 +311,46 @@ $('batchRun').onclick=async()=>{
     }));
     $('batchStatus').textContent='完成：成功 '+result.successful+' 個；失敗 '+result.failed+' 個。';
   }catch(e){$('batchStatus').textContent='錯誤：'+e.message;}
+  finally{button.disabled=false;}
+};
+$('portfolioRun').onclick=async()=>{
+  const button=$('portfolioRun');button.disabled=true;
+  $('portfolioStatus').textContent='正在執行同步跨市場策略…';
+  try{
+    const base=config();
+    const venues=$('batchMarkets').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean).map((line,i)=>{
+      const values=line.split(',').map(x=>x.trim());
+      if(![3,5].includes(values.length)||!values[0]||!values[2])
+        throw new Error('市場清單格式錯誤（需 provider,exchange,symbol）');
+      const risk={product_type:'perp',fee_bps:base.risk.fee_bps,
+                  slippage_bps:base.risk.slippage_bps};
+      if(values.length===5){
+        risk.fee_bps=Number(values[3]);risk.slippage_bps=Number(values[4]);
+      }
+      return {id:'venue_'+i,data:{...base.data,provider:values[0],exchange:values[1],
+                 symbol:values[2]},risk};
+    });
+    if(venues.length<2)throw new Error('共同資金至少需要兩個交易所');
+    const output=await post('/api/portfolio/backtests',{
+      venues,
+      portfolio:{initial_cash:base.risk.initial_cash,
+                 gross_notional_fraction:Number($('portfolioGross').value)},
+      strategy:{type:'spread',entry_bps:Number($('portfolioEntry').value),
+                exit_bps:Number($('portfolioExit').value)}
+    });
+    const m=output.metrics;
+    $('portfolioMetrics').replaceChildren(...[
+      ['最終共同權益',m.final_equity],['共同淨利',m.net_profit],
+      ['最大回撤 %',m.max_drawdown_pct],['PF',m.profit_factor??'—'],
+      ['勝率 %',m.win_rate_pct??'—'],['平倉筆數',m.closed_trades]
+    ].map(([name,value])=>{
+      const el=document.createElement('div');el.className='metric';
+      const small=document.createElement('small');small.textContent=name;
+      const big=document.createElement('b');big.textContent=String(value);
+      el.append(small,big);return el;
+    }));
+    $('portfolioStatus').textContent='共同資金模擬完成，對齊 '+output.bars+' 根 K 線。';
+  }catch(e){$('portfolioStatus').textContent='錯誤：'+e.message;}
   finally{button.disabled=false;}
 };
 $('reload').onclick=loadJobs;
