@@ -29,11 +29,14 @@ jobs:
           url = os.environ.get('RENDER_SITE_URL', '').strip().rstrip('/')
           sha = os.environ['TARGET_SHA']
           if not url:
-              # Infer only a CANDIDATE from the checked-in Render blueprint.
-              # Never publish it unless the live /api/health proves this SHA
-              # and production mode. A custom service name requires the var.
+              # The inferred service URL is only a candidate, never published
+              # without live health confirmation of SHA and production mode.
               blueprint = pathlib.Path('render.yaml').read_text(encoding='utf-8')
-              match = re.search(r'(?m)^\\s+name:\\s*([A-Za-z0-9-]+)\\s*
+              match = re.search(r'(?m)^\s+name:\s*([A-Za-z0-9-]+)\s*$', blueprint)
+              if not match:
+                  raise SystemExit('Set RENDER_SITE_URL to the real HTTPS Render URL')
+              url = 'https://' + match.group(1) + '.onrender.com'
+              print('Checking candidate inferred from render.yaml')
           parts = urllib.parse.urlsplit(url)
           if (parts.scheme != 'https' or not parts.hostname or
               not parts.hostname.endswith('.onrender.com') or
@@ -48,45 +51,6 @@ jobs:
                       payload = json.load(resp)
                   if (payload.get('ok') is True and payload.get('deployed_commit') == sha and
                       payload.get('public_demo') is False):
-                      with summary.open('a') as f:
-                          f.write('## Render deployment verified LIVE\n\n')
-                          f.write(f'**[Open Universal Backtester on Render]({url})**\n\n')
-                          f.write(f'- Deployed commit: `{sha}`\n')
-                          f.write(f'- [Health check]({endpoint})\n')
-                      print('Verified live Render URL:', url)
-                      break
-                  issue = ('Waiting for production commit ' + sha + '; current ' +
-                           str(payload.get('deployed_commit')) + '; demo=' +
-                           str(payload.get('public_demo')))
-              except (OSError, ValueError) as exc:
-                  issue = str(exc)
-              print(issue)
-              if attempt < 47:
-                  time.sleep(15)
-          else:
-              with summary.open('a') as f:
-                  f.write('## Render deployment not confirmed\n\n')
-                  f.write(f'Expected `{sha}` at {url}. Last check: {issue}.\n')
-              raise SystemExit('Render deployment not verified for this commit')
-          PY
-, blueprint)
-              if not match:
-                  raise SystemExit('Set RENDER_SITE_URL: Render blueprint has no service name')
-              url = 'https://' + match.group(1) + '.onrender.com'
-              print('No configured RENDER_SITE_URL; checking inferred candidate (not verified yet)')
-          parts = urllib.parse.urlsplit(url)
-          if (parts.scheme != 'https' or not parts.hostname or
-              not parts.hostname.endswith('.onrender.com') or
-              parts.username or parts.password or parts.path or parts.query or parts.fragment):
-              raise SystemExit('RENDER_SITE_URL must be https://<actual-service>.onrender.com')
-          endpoint = url + '/api/health'
-          issue = 'No response yet'
-          for attempt in range(48):
-              try:
-                  request = urllib.request.Request(endpoint, headers={'Cache-Control':'no-cache'})
-                  with urllib.request.urlopen(request, timeout=12) as resp:
-                      payload = json.load(resp)
-                  if payload.get('ok') is True and payload.get('deployed_commit') == sha:
                       with summary.open('a') as f:
                           f.write('## Render deployment verified LIVE\n\n')
                           f.write(f'**[Open Universal Backtester on Render]({url})**\n\n')
