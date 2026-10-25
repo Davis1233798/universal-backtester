@@ -18,3 +18,7 @@ data
 !/.env.example
 *.log
 tests
+
+frontend/node_modules
+unibacktest/static/app
+frontend/.vite

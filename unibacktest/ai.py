@@ -55,8 +55,8 @@ async def generate_pine(description: str) -> dict:
     message = data["choices"][0]["message"]["content"]
     if not isinstance(message, str):
         raise ValueError("AI did not generate textual strategy code")
-    source = re.sub(r"^\\s*```(?:pine|pinescript)?\\s*\\n", "", message.strip(), flags=re.I)
-    source = re.sub(r"\\n\\s*```\\s*$", "", source).strip()
+    source = re.sub(r"^\s*```(?:pine|pinescript)?\s*\n", "", message.strip(), flags=re.I)
+    source = re.sub(r"\n\s*```\s*$", "", source).strip()
     if len(source) > 12000:
         raise ValueError("Generated strategy exceeds the 12k restricted parser limit")
     try:

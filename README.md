@@ -1,3 +1,51 @@
+# Universal Backtester · 專業量化研究工作台
+
+> 2026-10-25 前端重構：現已提供 React + TypeScript + Vite 的專業介面，
+> 借鑑 CryptoQuantX 的工作區設計，並重新實作元件。API 的數學模型
+> 仍是 Python 基礎版本，**尚非完整 Pine Script 或 Rust 原生數億根回測器**。
+
+### 前端功能
+
+- 可縮放 K 線、成交量、EMA9/21、Bollinger、RSI、MACD 及買賣標記
+  （Lightweight Charts v4 使用本機 bundle，無外部 JavaScript CDN）。
+- 左側工作區導覽：策略回測、策略工廠、多市場回測、績效分析、
+  歷史回測、每日排程。桌面／平板／手機響應式版面。
+- 私人策略庫：Pine 代碼、內建策略參數及不可變的修訂歷史，
+  支援建立、修改、刪除、還原；所有路由受私人 Bearer Token 保護。
+- 批次回測：交易所矩陣（CEX + Hyperliquid），以及研究用
+  同步共享資金價差策略。交易模型限制在頁面中明確標示。
+- 勝率、PF、最大回撤、平均 R、Sharpe、Sortino、Calmar、交易日誌與 JSON 匯出。
+- 可選 AI 策略草稿：設定後端私密環境變數 `UBT_AI_API_KEY`
+  （可選 `UBT_AI_MODEL`，預設 `gpt-4.1-mini`）後提供自然語言策略草稿。
+  生成程式需通過有限的 Pine 相容子集解析，**絕不自動執行或下單**。
+  若未配置，API 返回 503，而非捏造 AI 結果。
+
+### 本機建置與啟動
+
+```bash
+# 在專案根目錄先自行建立未提交的 .env
+# UBT_API_TOKEN 至少 32 字元，不可使用範例測試 Token
+docker compose up --build -d
+```
+
+Docker 會先建置 `frontend/` Vite bundle，再透過 FastAPI
+供應 `/assets/*`；獨立 Python 啟動且缺少 bundle 時使用
+`unibacktest/static/index.html` 舊版安全備援介面。
+本機前端開發：`cd frontend && npm install && npm run dev`，
+Vite 會將 `/api` 代理到本機 `127.0.0.1:8000`。
+
+**部署安全：** `render.yaml` 預設私人 API；必須在 Render Dashboard
+設定私人 `UBT_API_TOKEN`。公開 Demo 需明確設 `UBT_PUBLIC_DEMO=1`，
+僅有合成行情且不能儲存策略或呼叫交易所。SPA 授權 Token
+僅留在目前頁面的記憶體，不寫到網址或 localStorage。
+正式多人服務仍需要帳戶與資源隔離、速率限制和沙盒。
+
+**Render 網址：** 必須先設定 GitHub Actions variable `RENDER_SITE_URL`
+為實際的 Render 網址，部署驗證任務才會以 /api/health 的 Commit
+回報確認服務已上線。**CI 綠燈不等於 Render 已部署成功。**
+
+---
+
 # Universal Backtester · 多市場量化回測系統（MVP 0.1）
 
 **可立即使用的回測原型；不是所有交易所、所有合約或所有策略語言的完整相容實作，也不是交易所實盤撮合模擬器。**

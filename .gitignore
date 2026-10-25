@@ -25,3 +25,8 @@ data/
 .DS_Store
 .idea/
 .vscode/
+
+# React/Vite bundled frontend
+frontend/node_modules/
+unibacktest/static/app/
+frontend/.vite/
