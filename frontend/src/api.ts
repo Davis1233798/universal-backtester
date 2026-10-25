@@ -44,7 +44,7 @@ export const dateAt=(ms?:number)=>ms?new Date(ms).toISOString().slice(0,16).repl
 export const dayOffset=(days:number)=>new Date(Date.now()-days*86400000).toISOString().slice(0,10);
 export const samplePine=`//@version=6\nstrategy("EMA Cross Research", overlay=true)\nfast = input.int(9, "Fast")\nslow = input.int(21, "Slow")\nfastMA = ta.ema(close, fast)\nslowMA = ta.ema(close, slow)\nif ta.crossover(fastMA, slowMA)\n    strategy.entry("Long", strategy.long)\nif ta.crossunder(fastMA, slowMA)\n    strategy.close("Long")`;
 export const initialConfig:BacktestConfig={
-  data:{provider:'demo',exchange:'binanceusdm',symbol:'BTC/USDT:USDT',timeframe:'1h',start:dayOffset(45),end:dayOffset(0),market_type:'swap',include_funding:false,allow_partial:false},
+  data:{provider:'ccxt',exchange:'binanceusdm',symbol:'BTC/USDT:USDT',timeframe:'1h',start:dayOffset(45),end:dayOffset(0),market_type:'swap',include_funding:false,allow_partial:false},
   risk:{initial_cash:10000,fee_bps:6,slippage_bps:2,leverage:1,product_type:'perp',market:'crypto',r_reference_stop_pct:2,force_close:true},
   strategy:{type:'pine',code:samplePine},streaming:false,refresh:false
 };

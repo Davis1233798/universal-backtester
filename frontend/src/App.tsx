@@ -59,7 +59,9 @@ export default function App(){
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const [result,setResult]=useState<BacktestResult|null>(null);
  const [candles,setCandles]=useState<Candle[]>([]);
- const [marketQuery,setMarketQuery]=useState('BTC'),[marketMatches,setMarketMatches]=useState<Array<{symbol:string;name?:string;base?:string;exchange?:string}>>([]);
+ const [chartBusy,setChartBusy]=useState(false),[chartError,setChartError]=useState('');
+ const chartRequest=useRef(0);
+ const [marketQuery,setMarketQuery]=useState(''),[marketMatches,setMarketMatches]=useState<Array<{symbol:string;name?:string;base?:string;exchange?:string}>>([]);
  const [marketBusy,setMarketBusy]=useState(false);
  const [runs,setRuns]=useState<Array<Record<string,unknown>>>([]);
  const [strategies,setStrategies]=useState<SavedStrategy[]>([]);
@@ -104,16 +106,37 @@ export default function App(){
  useEffect(()=>{if(isPrivate)refreshLibrary().catch(()=>{});},[isPrivate,refreshLibrary]);
  useEffect(()=>{if(isPrivate&&view==='jobs')refreshJobs().catch(e=>setError(e.message));},[view,isPrivate,refreshJobs]);
  async function unlock(e:FormEvent){e.preventDefault();setAuthError('');client.setBearer(token);
-  try{const s=await client.get<SourceData>('/api/sources');setSources(s);setNotice('後端授權成功。Token 僅存在此頁的記憶體。');setToken('');}
+  try{const s=await client.get<SourceData>('/api/sources');setSources(s);
+    setConfig(prev=>prev.data.provider==='demo'?{...prev,data:{...prev.data,
+      provider:'ccxt',exchange:'binanceusdm',symbol:'BTC/USDT:USDT'}}:prev);
+    setNotice('已連線正式行情服務。可搜尋任意上市商品，或使用快捷市場。');setToken('');}
   catch(e){setAuthError((e as Error).message);client.clearBearer();}
  }
- function logout(){client.clearBearer();setSources(null);setResult(null);setCandles([]);setStrategies([]);setRuns([]);setNotice('已清除本頁授權');}
- async function loadChart(cfg=config){
-  if(!isPrivate)return;
-  try{const q=new URLSearchParams({...cfg.data,include_funding:String(cfg.data.include_funding),allow_partial:String(cfg.data.allow_partial),max_points:'1500'});
-   const response=await client.get<{candles:Candle[]}>('/api/candles?'+q.toString());setCandles(response.candles||[]);}
-  catch(e){setNotice('圖表提示：'+(e as Error).message)}
+ function logout(){chartRequest.current+=1;client.clearBearer();setSources(null);setResult(null);setCandles([]);setStrategies([]);setRuns([]);setNotice('已清除本頁授權');}
+ async function loadChart(cfg=config, refresh=false){
+  if(!isPrivate || cfg.data.provider==='demo')return;
+  const request=++chartRequest.current;
+  setChartBusy(true);setChartError('');setCandles([]);
+  try{
+   const response=await client.post<{candles:Candle[];represented_bars:number;warnings?:string[];cached?:boolean}>(
+    '/api/candles/load',{data:cfg.data,refresh,max_points:1500});
+   if(request!==chartRequest.current)return;
+   if(!response.candles?.length)throw new Error('此商品在指定日期沒有可取得的原始 K 線');
+   setCandles(response.candles);
+   if(response.warnings?.length)setNotice('行情注意事項：'+response.warnings.join('；'));
+  }catch(e){
+   if(request===chartRequest.current)setChartError((e as Error).message);
+  }finally{
+   if(request===chartRequest.current)setChartBusy(false);
+  }
  }
+ useEffect(()=>{
+  if(!isPrivate || config.data.provider==='demo')return;
+  const t=setTimeout(()=>{void loadChart(config)},650);
+  return ()=>{clearTimeout(t);chartRequest.current+=1};
+ },[isPrivate,config.data.provider,config.data.exchange,config.data.symbol,
+    config.data.market_type,config.data.timeframe,config.data.start,config.data.end,
+    config.data.include_funding]);
  async function runBacktest(){setBusy(true);setError('');setNotice('');
   try{
    const cfg=structuredClone(config);
@@ -127,7 +150,7 @@ export default function App(){
  }
  async function lookupMarkets(){setMarketBusy(true);setError('');
   try{if(isDemo)throw new Error('公開示範沒有真實交易所市場搜尋');
-    const q=new URLSearchParams({provider:config.data.provider,exchange:config.data.exchange,market_type:config.data.market_type,q:marketQuery,limit:'60'});
+    const q=new URLSearchParams({provider:config.data.provider,exchange:config.data.exchange,market_type:config.data.market_type,q:marketQuery.trim()||'USDT',limit:'60'});
     const out=await client.get<{items:typeof marketMatches;matched_count:number}>('/api/markets?'+q.toString());setMarketMatches(out.items||[]);
     setNotice(`找到 ${out.matched_count||0} 筆市場，以下顯示最多 60 筆`);
   }catch(e){setError((e as Error).message)}finally{setMarketBusy(false)}
@@ -224,8 +247,44 @@ export default function App(){
           actions={<><button className="outline-button" onClick={()=>setView('strategies')}><BookOpen size={16}/> 策略工廠</button><button className="primary-button" onClick={runBacktest} disabled={busy}>{busy?<Loading/>:<Play size={16}/>} 執行回測</button></>}/>
         <div className="workspace-grid"><div className="workspace-main">
           <div className="market-strip"><div className="market-asset"><div className="asset-icon">₿</div><div><strong>{config.data.symbol||'BTC/USDT'}</strong><small>{config.data.provider.toUpperCase()} {config.data.exchange&&'· '+config.data.exchange}</small></div></div>
-          <div className="market-actions"><span className="muted">K 線週期</span>{['15m','1h','4h','1d'].map(t=><button key={t} className={'time-chip '+(t===config.data.timeframe?'active':'')} onClick={()=>updateData({timeframe:t})}>{t}</button>)}<span className="splitter"/><button className="quiet-button" onClick={()=>loadChart()} disabled={busy||isDemo}><RefreshCw size={14}/> 載入行情</button></div></div>
-          <CandleChart bars={candles} fills={result?.fills||[]} label={config.data.symbol} loading={busy} onReload={isPrivate?()=>loadChart():undefined}/>
+          <div className="market-actions"><span className="muted">K 線週期</span>{['15m','1h','4h','1d'].map(t=><button key={t} className={'time-chip '+(t===config.data.timeframe?'active':'')} onClick={()=>updateData({timeframe:t})}>{t}</button>)}<span className="splitter"/><button className="quiet-button" onClick={()=>loadChart(config,true)} disabled={busy||chartBusy||isDemo}>
+{chartBusy?<Loading/>:<RefreshCw size={14}/>} 重新整理行情</button></div></div>
+          {isPrivate&&<div className="market-switcher">
+            <div className="market-switcher-top">
+             <label className="field"><span>搜尋交易所所有上市商品</span><div className="input-row">
+               <input aria-label="市場商品搜尋" type="search" value={marketQuery}
+                 onChange={e=>setMarketQuery(e.target.value)}
+                 onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();void lookupMarkets()}}}
+                 placeholder={config.data.provider==='yfinance'?'AAPL、NVDA、2330.TW':'ETH、SOL、XRP 或商品代碼'}/>
+               <button type="button" className="outline-button" disabled={marketBusy}
+                 onClick={lookupMarkets}>{marketBusy?<Loading/>:<Search size={16}/>} 搜尋</button>
+             </div></label>
+             <span className="market-hint">從交易所即時商品目錄搜尋，沒有 BTC 單幣限制。</span>
+            </div>
+            <div className="market-quick">
+             {(config.data.provider==='yfinance'
+               ?['AAPL','NVDA','TSLA','MSFT','2330.TW']
+               :config.data.provider==='hyperliquid'
+                ?['BTC','ETH','SOL','XRP','DOGE','HYPE']
+                :['BTC','ETH','SOL','XRP','DOGE','BNB','ADA','AVAX','LINK','LTC']
+               ).map(base=><button type="button" key={base} className="time-chip"
+                 onClick={()=>{const symbol=config.data.provider==='yfinance'||config.data.provider==='hyperliquid'
+                   ?base:base+'/USDT'+(config.data.market_type==='spot'?'':':USDT');
+                   updateData({symbol});setMarketQuery(base);setMarketMatches([])}}>
+                 {base}</button>)}
+            </div>
+            {marketMatches.length>0&&<div className="market-search-results" role="listbox" aria-label="已搜尋到的交易商品">
+              {marketMatches.map((m,i)=><button type="button" role="option"
+                aria-selected={m.symbol===config.data.symbol} key={m.symbol+'-'+i}
+                onClick={()=>{updateData({symbol:m.symbol});setMarketMatches([]);setMarketQuery(m.symbol)}}>
+                <strong>{m.symbol}</strong><span>{m.name||m.base||m.exchange||'可交易商品'}</span>
+              </button>)}
+             </div>}
+          </div>}
+          {chartError&&<Message tone="bad"><strong>行情載入失敗：</strong> {chartError}<button className="outline-button slim"
+            onClick={()=>loadChart(config,true)}>重試抓取真實行情</button></Message>}
+          <CandleChart bars={candles} fills={result?.fills||[]} label={config.data.symbol}
+            loading={busy||chartBusy} onReload={isPrivate?()=>loadChart(config,true):undefined}/>
           <div className="panel editor-panel"><div className="panel-head"><div><div className="eyebrow">STRATEGY CODE</div><h2>策略編輯器 <Badge tone="blue">PINE SUBSET</Badge></h2></div><div className="toolbar"><button className="quiet-button" onClick={()=>{updateStrategy({type:'pine',code:samplePine});setSelectedStrategy('')}}><RefreshCw size={14}/> 載入範例</button><button className="quiet-button" onClick={()=>fileInput.current?.click()}><FileUp size={14}/> 匯入 .pine</button><button className="quiet-button" onClick={saveStrategy} disabled={!isPrivate||strategiesBusy}><Save size={14}/> 儲存策略</button><button className="icon-button" onClick={()=>setExpandEditor(x=>!x)} aria-label="收合策略編輯器">{expandEditor?<ChevronDown size={16}/>:<ChevronRight size={16}/>}</button></div></div>
             <input hidden ref={fileInput} type="file" accept=".pine,.txt" onChange={async e=>{const f=e.target.files?.[0];if(f){if(f.size>12000)setError('Pine 檔案超過 12 KB，現有策略子集無法載入');else{updateStrategy({type:'pine',code:await f.text()});setNotice('Pine 檔案已載入編輯器')}e.target.value=''}}}/>
             {expandEditor&&<><div className="editor-header"><input aria-label="策略名稱" value={strategyName} onChange={e=>setStrategyName(e.target.value)} placeholder="策略名稱"/><span>pine · v5/v6 相容子集</span></div>
@@ -235,7 +294,12 @@ export default function App(){
           <div className="two-panels"><EquityChart points={result?.equity||result?.equity_preview||[]}/><div className="panel"><div className="panel-head"><div><div className="eyebrow">RECENT FILLS</div><h2>最新成交</h2></div><button className="quiet-button" onClick={()=>setView('analytics')}>全部交易 <ArrowRight size={14}/></button></div>
              {result?.fills?.length?<div className="mini-fills">{result.fills.slice(-6).reverse().map((f,i)=><div key={i}><span className={f.qty>0?'positive':'negative'}>{f.qty>0?'BUY':'SELL'}</span><strong>{fmt(f.price,3)}</strong><small>{dateAt(f.ts)}</small></div>)}</div>:empty('沒有成交資料','執行回測後這裡顯示最近交易。',<ArrowLeftRight size={24}/>)}</div></div>
         </div><aside className="workspace-settings"><section className="panel settings-panel"><div className="panel-head"><div><div className="eyebrow">BACKTEST CONFIGURATION</div><h2>回測設定</h2></div><Settings2 size={18} className="muted"/></div>
-            <div className="settings-body"><SelectField label="行情來源" value={config.data.provider} onChange={v=>updateData({provider:v,symbol:v==='demo'?'SYNTHETIC':config.data.symbol})}>{(sources?.providers||['demo']).map(p=><option key={p} value={p}>{({demo:'合成示範',ccxt:'CEX · CCXT',hyperliquid:'DEX · Hyperliquid',yfinance:'股票 · Yahoo Finance',csv:'本機 CSV'} as Record<string,string>)[p]||p}</option>)}</SelectField>
+            <div className="settings-body"><SelectField label="行情來源" value={config.data.provider} onChange={v=>{setMarketMatches([]);setMarketQuery('');
+ const symbol=v==='hyperliquid'?'BTC':v==='yfinance'?'AAPL':v==='demo'?'SYNTHETIC':'BTC/USDT:USDT';
+ updateData({provider:v,exchange:v==='ccxt'?'binanceusdm':'',symbol,include_funding:false});
+ if(v==='yfinance')updateRisk({product_type:'equity',market:'stock',leverage:1});
+ else updateRisk({product_type:'perp',market:'crypto'});
+ }}>{(sources?.providers||['ccxt','hyperliquid','yfinance']).filter(p=>isDemo||p!=='demo').map(p=><option key={p} value={p}>{({demo:'合成示範',ccxt:'CEX · CCXT',hyperliquid:'DEX · Hyperliquid',yfinance:'股票 · Yahoo Finance',csv:'本機 CSV'} as Record<string,string>)[p]||p}</option>)}</SelectField>
             {config.data.provider==='ccxt'&&<label className="field"><span>交易所 ID</span><input list="available-exchanges" value={config.data.exchange} onChange={e=>updateData({exchange:e.target.value})}/><datalist id="available-exchanges">{sources?.ccxt_exchanges_installed?.map(x=><option key={x} value={x}/>)}</datalist></label>}
             <label className="field"><span>交易商品</span><input value={config.data.symbol} onChange={e=>updateData({symbol:e.target.value})}/></label>
             {config.data.provider==='csv'&&<label className="field"><span>後端 CSV 路徑（私人主機）</span><input value={config.data.csv_path||''} onChange={e=>updateData({csv_path:e.target.value})}/></label>}
