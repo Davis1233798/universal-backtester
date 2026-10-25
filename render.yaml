@@ -1,5 +1,6 @@
-# One-click Render Blueprint for a safe, public, synthetic-data-only demo.
-# Real CEX/DEX/stocks, plugins, files, and scheduled jobs remain local/private.
+# Private, fail-closed Render Blueprint.
+# Set a strong UBT_API_TOKEN (32+ chars) privately in Render secrets.
+# No anonymous API is exposed; UBT_ALLOW_EXEC remains disabled.
 services:
   - type: web
     name: universal-backtester-demo
@@ -11,11 +12,11 @@ services:
     autoDeployTrigger: checksPass
     envVars:
       - key: UBT_PUBLIC_DEMO
-        value: "1"
+        value: "0"
       - key: UBT_ALLOW_EXEC
         value: "0"
       - key: UBT_API_TOKEN
-        value: ""
+        sync: false
       - key: UBT_DB
         value: /tmp/universal-backtester-demo.sqlite3
       - key: PORT
