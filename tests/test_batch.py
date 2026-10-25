@@ -22,7 +22,7 @@ def test_multi_market_demo_two_symbols(monkeypatch, tmp_path):
        {'provider':'demo','symbol':'SYNTH1','start':'2024-01-01','end':'2024-05-01'},
        {'provider':'demo','symbol':'SYNTH2','start':'2024-01-01','end':'2024-05-01'}]}
     out=run_multi_market(payload)
-    assert out['count']==2 and out['successful']==2
+    assert out['count']==2 and out['successful']==2, out['results']
     assert out['results'][0]['data']['symbol']=='SYNTH1'
     assert out['results'][1]['data']['symbol']=='SYNTH2'
     assert out['results'][0]['result']['metrics']['initial_equity']==10000
@@ -41,7 +41,7 @@ def test_multi_market_errors_isolated(monkeypatch,tmp_path):
     result=run_multi_market({'workers':2,'markets':[
       {'provider':'demo','symbol':'OK','start':'2024-01-01','end':'2024-02-01'},
       {'provider':'demo','symbol':'BAD','start':'2024-03-01','end':'2024-02-01'}]})
-    assert result['successful']==1
+    assert result['successful']==1, result['results']
     assert result['failed']==1
     assert result['results'][1]['status']=='error'
 
@@ -59,7 +59,7 @@ def test_batch_api_private_and_public_guard(monkeypatch,tmp_path):
          'workers':2,'risk':{'product_type':'spot','fee_bps':0}}
     out=client.post('/api/backtests/batch',json=cfg)
     assert out.status_code==200,out.text
-    assert out.json()['successful']==2
+    assert out.json()['successful']==2, out.json()['results']
     view=client.get('/api/candles',params={'provider':'demo','symbol':'API1','start':'2024-01-01','end':'2024-02-01'})
     assert view.status_code==200,view.text
     assert view.json()['represented_bars']>20

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .service import execute
+from .storage import Store
 
 
 def decimate_extrema(points: list[dict], max_points: int = 1200) -> list[dict]:
@@ -100,6 +101,8 @@ def run_multi_market(config: dict) -> dict:
         seen.add(identity)
         builds.append({"data": data, "strategy": common_strategy,
                        "risk": {**risk_base, **risk}, "refresh": bool(config.get("refresh", False))})
+    # Initialize SQLite schema in the parent process to avoid concurrent DDL races.
+    Store()
     results: list[dict | None] = [None]*len(builds)
     # One process per worker, NOT one process per K line.
     # Failure of one venue should not drop all results.
