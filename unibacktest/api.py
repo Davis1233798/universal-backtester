@@ -155,6 +155,17 @@ def markets(provider: str, q: str, exchange: str = "",
         raise HTTPException(422, detail=str(err)) from err
 
 
+@app.post("/api/portfolio/backtests")
+def portfolio_backtest(payload: dict):
+    """Synchronized cross-venue research: one shared simulated account."""
+    private_only()
+    from .portfolio import run_portfolio
+    try:
+        return run_portfolio(payload)
+    except (ValueError,RuntimeError,PermissionError) as exc:
+        raise HTTPException(422,detail=str(exc)) from exc
+
+
 @app.post("/api/backtests/batch")
 def backtests_batch(payload: dict):
     """Run common strategy independently across multiple exchanges/DEX venues."""
