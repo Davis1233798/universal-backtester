@@ -60,7 +60,7 @@ export function CandleChart({bars,fills=[],label,loading=false,onReload}:{bars:C
    }
    if(fills.length){
      const markers:SeriesMarker<UTCTimestamp>[]=fills.filter(f=>data.some(b=>b.ts===f.ts))
-       .map(f=>({time:time(f.ts),position:f.qty>0?'belowBar':'aboveBar',shape:f.qty>0?'arrowUp':'arrowDown',color:f.qty>0?'#24ba98':'#f36975',text:f.qty>0?'B':'S'}))
+       .map(f=>({time:time(f.ts),position:(f.qty>0?'belowBar':'aboveBar') as 'belowBar'|'aboveBar',shape:(f.qty>0?'arrowUp':'arrowDown') as 'arrowUp'|'arrowDown',color:f.qty>0?'#24ba98':'#f36975',text:f.qty>0?'B':'S'}))
        .sort((a,b)=>(a.time as number)-(b.time as number));
      candles.setMarkers(markers);
    }
