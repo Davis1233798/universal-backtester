@@ -1,3 +1,4 @@
+import os
 import pytest
 from unibacktest.pine import PineSubsetStrategy
 from unibacktest.service import execute
@@ -95,7 +96,7 @@ def test_public_pine_api_works_without_exec(monkeypatch,tmp_path):
     monkeypatch.setenv('UBT_PUBLIC_DEMO','1')
     monkeypatch.delenv('UBT_ALLOW_EXEC', raising=False)
     monkeypatch.setenv('UBT_DB',str(tmp_path/'unused.db'))
-    client = TestClient(app)
+    client = TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     body={'data':{'provider':'demo','symbol':'DEMO','start':'2024-01-01','end':'2024-06-01'},
           'risk':{'product_type':'spot','leverage':1},
           'strategy':{'type':'pine','code':PINE}}

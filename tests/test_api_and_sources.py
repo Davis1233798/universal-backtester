@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from fastapi.testclient import TestClient
 import sys
@@ -13,7 +14,7 @@ def test_public_api_with_synthetic(tmp_path, monkeypatch):
     monkeypatch.setenv('UBT_DB',str(tmp_path/'app.db'))
     import unibacktest.storage as storage
     monkeypatch.setattr(storage,'DEFAULT_DB',str(tmp_path/'app.db'))
-    client=TestClient(app)
+    client=TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     assert client.get('/').status_code==200
     assert 'text/html' in client.get('/').headers['content-type']
     assert client.get('/api/health').json()['ok'] is True
@@ -101,7 +102,7 @@ def test_yfinance_daily_stock_session_day(monkeypatch):
 def test_public_demo_is_stateless_and_rejects_unsafe_operations(tmp_path, monkeypatch):
     monkeypatch.setenv('UBT_PUBLIC_DEMO', '1')
     monkeypatch.setenv('UBT_DB', str(tmp_path/'should_not_exist.db'))
-    client = TestClient(app)
+    client = TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     assert client.get('/api/health').json()['public_demo'] is True
     providers = client.get('/api/sources').json()
     assert providers['providers'] == ['demo']
@@ -132,7 +133,7 @@ def test_public_demo_is_stateless_and_rejects_unsafe_operations(tmp_path, monkey
 
 
 def test_pine_editor_visible_by_default_in_web_ui():
-    client=TestClient(app)
+    client=TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     html=client.get('/').text
     assert 'id="pine-editor">' in html
     assert '<option value="pine" selected>' in html
@@ -142,7 +143,7 @@ def test_pine_editor_visible_by_default_in_web_ui():
 
 
 def test_metrics_r_reference_ui_and_deployment_health(monkeypatch):
-    client=TestClient(app)
+    client=TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     html=client.get('/').text
     assert 'id="rRef"' in html
     assert '營利因子 PF' in html
@@ -159,7 +160,7 @@ def test_private_backtest_sqlite_stream_mode(monkeypatch,tmp_path):
     monkeypatch.delenv('UBT_PUBLIC_DEMO',raising=False)
     from fastapi.testclient import TestClient
     from unibacktest.api import app
-    client=TestClient(app)
+    client=TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     cfg={'data':{'provider':'demo','symbol':'STREAM','start':'2024-01-01','end':'2024-04-01'},
          'risk':{'product_type':'spot','fee_bps':0,'slippage_bps':0},
          'strategy':{'type':'builtin','name':'buy_hold'},'streaming':True}

@@ -1,3 +1,4 @@
+import os
 from fastapi.testclient import TestClient
 from unibacktest.portfolio import run_portfolio
 from unibacktest.api import app
@@ -61,7 +62,7 @@ def test_cross_venue_custom_python_requires_trusted_host(monkeypatch,tmp_path):
 
 def test_cross_venue_private_http_guard(monkeypatch,tmp_path):
     monkeypatch.setenv('UBT_PUBLIC_DEMO','1')
-    client=TestClient(app)
+    client=TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     assert client.post('/api/portfolio/backtests',json=sample()).status_code==403
     monkeypatch.delenv('UBT_PUBLIC_DEMO',raising=False)
     monkeypatch.setenv('UBT_DB',str(tmp_path/'rest.sqlite'))

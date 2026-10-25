@@ -1,3 +1,4 @@
+import os
 import pytest
 from unibacktest.batch import run_multi_market,decimate_extrema
 
@@ -53,7 +54,7 @@ def test_batch_api_private_and_public_guard(monkeypatch,tmp_path):
     monkeypatch.setenv('UBT_DB', str(tmp_path/'api.sqlite3'))
     monkeypatch.setattr(storage, 'DEFAULT_DB', str(tmp_path/'api.sqlite3'))
     monkeypatch.delenv('UBT_PUBLIC_DEMO',raising=False)
-    client=TestClient(app)
+    client=TestClient(app, headers={"Authorization":"Bearer "+os.environ["UBT_API_TOKEN"]})
     cfg={'markets':[{'provider':'demo','symbol':'API1','start':'2024-01-01','end':'2024-02-01'},
                     {'provider':'demo','symbol':'API2','start':'2024-01-01','end':'2024-02-01'}],
          'workers':2,'risk':{'product_type':'spot','fee_bps':0}}
