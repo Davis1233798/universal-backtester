@@ -17,7 +17,7 @@ _ALLOWED_FUNCTIONS = {
     'ta.crossover', 'ta.crossunder', 'ta.cross', 'ta.change',
     'math.abs', 'math.min', 'math.max', 'abs', 'min', 'max',
     'input.int', 'input.float', 'input.bool', 'input.source',
-    'nz', 'na', 'strategy.entry', 'strategy.close', 'strategy.close_all',
+    'nz', 'na', 'strategy.entry', 'strategy.close', 'strategy.close_all', 'strategy.exit',
     'strategy.order', 'strategy.cancel', 'strategy.cancel_all',
     'plot', 'plotshape', 'plotchar', 'hline', 'bgcolor', 'barcolor', 'alertcondition',
 }
@@ -96,7 +96,7 @@ def _validate_statements(body: list[ast.stmt], names: set[str], budget: list[int
             _validate_statements(stmt.orelse, names.copy(), budget)
         elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             name = _function_name(stmt.value.func)
-            if name not in ('strategy.entry', 'strategy.close', 'strategy.close_all',
+            if name not in ('strategy.entry', 'strategy.close', 'strategy.close_all', 'strategy.exit',
                             'plot', 'plotshape', 'plotchar', 'hline', 'bgcolor', 'barcolor', 'alertcondition'):
                 raise ValueError(f'Unsupported Pine statement: {name}')
             _check_expr(stmt.value, names, budget)
@@ -170,6 +170,7 @@ class PineSubsetStrategy:
         self.ops = 0
         self.target = 0.0
         self.bar_index = -1
+        self.order_event = None
 
     def _limit(self):
         self.ops += 1
@@ -336,10 +337,28 @@ class PineSubsetStrategy:
                     self.target=float(direction)
                 elif fn in ('strategy.close','strategy.close_all'):
                     self.target=0.0
+                    self.order_event={'cancel':True}
+                elif fn == 'strategy.exit':
+                    # Single net position only. from_entry/id are not independent
+                    # order books; no qty/qty_percent/trailing/tick orders yet.
+                    if len(call.args)>2:
+                        raise ValueError('strategy.exit supports id, from_entry, stop and limit only')
+                    allowed={'stop','limit','from_entry'}
+                    if any(k.arg not in allowed for k in call.keywords):
+                        raise ValueError('Unsupported strategy.exit parameter; supported: stop, limit')
+                    kw={k.arg:self._value(k.value) for k in call.keywords}
+                    stop,limit=kw.get('stop'),kw.get('limit')
+                    if stop is None and limit is None:
+                        raise ValueError('strategy.exit needs a stop or limit price')
+                    if any(type(p) not in (int,float) or not math.isfinite(p) or p<=0
+                           for p in (stop,limit) if p is not None):
+                        raise ValueError('stop and limit must be positive finite prices')
+                    self.order_event={'stop':stop,'limit':limit}
                 else: raise ValueError(f'Pine order not supported: {fn}')
 
     def __call__(self, ctx: dict) -> float:
         self.ctx=ctx
+        self.order_event=None
         self.ops=0
         self.bar_index+=1
         self.target=float(ctx.get('target',0))

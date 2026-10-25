@@ -127,3 +127,24 @@ def test_partial_closes_allocate_entry_and_exit_fees():
     assert sum(t['net_pnl'] for t in trades)==pytest.approx(res['metrics']['net_profit'],abs=.0001)
     assert sum(t['entry_fee'] for t in trades)==pytest.approx(100)
     assert sum(t['exit_fee'] for t in trades)==pytest.approx(res['metrics']['fees_paid']-100)
+
+
+def test_stop_gap_worse_open_and_limit_fill():
+    from unibacktest.pine import PineSubsetStrategy
+    code='''//@version=6
+strategy("Exit")
+strategy.entry("L",strategy.long)
+strategy.exit("XL","L",stop=95,limit=115)
+'''
+    candle=[Bar(0,100,100,100,100,1),Bar(D,100,100,100,100,1),
+            Bar(2*D,90,95,88,92,1),Bar(3*D,92,92,92,92,1)]
+    outcome=run_backtest(candle,PineSubsetStrategy(code),
+                         Risk(product_type="spot",fee_bps=0,slippage_bps=0))
+    assert outcome['closed_trades'][0]['exit_price']==90
+    assert outcome['closed_trades'][0]['reason']=='stop_market'
+    bullish=[Bar(0,100,100,100,100,1),Bar(D,100,100,100,100,1),
+             Bar(2*D,120,123,110,120,1),Bar(3*D,120,120,120,120,1)]
+    got=run_backtest(bullish,PineSubsetStrategy(code),
+                     Risk(product_type="spot",fee_bps=0,slippage_bps=0))
+    assert got['closed_trades'][0]['exit_price']==120
+    assert got['closed_trades'][0]['reason']=='take_profit_limit'

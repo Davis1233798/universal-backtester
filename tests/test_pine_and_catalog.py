@@ -137,3 +137,37 @@ if not na(v[1000]) and v > v[1000]
 '''
     out=run_backtest(candles,PineSubsetStrategy(script),Risk(product_type="spot",fee_bps=0,slippage_bps=0))
     assert out['fills'][0]['ts']==1001*day
+
+
+def test_pine_strategy_exit_stop_and_limit_supported():
+    from unibacktest.engine import run_backtest
+    from unibacktest.model import Bar, Risk
+    day=86400000
+    candles=[Bar(0,100,100,100,100,1),
+             Bar(day,100,100,100,100,1),
+             Bar(2*day,100,108,94,100,1),
+             Bar(3*day,100,100,100,100,1)]
+    code='''//@version=6
+strategy("Bracket")
+strategy.entry("L", strategy.long)
+strategy.exit("XL","L",stop=95,limit=105)
+'''
+    result=run_backtest(candles,PineSubsetStrategy(code),
+                        Risk(product_type="spot",fee_bps=0,slippage_bps=0))
+    assert result['closed_trades'][0]['reason']=='stop_market'
+    assert result['closed_trades'][0]['exit_price']==95
+
+
+def test_pine_strategy_exit_rejects_trailing_and_qty():
+    for fragment in ("trail_points=10","qty_percent=50","stop=0"):
+        src='strategy("X")\nstrategy.entry("L",strategy.long)\nstrategy.exit("XL","L",'+fragment+')'
+        if fragment=="stop=0":
+            strat=PineSubsetStrategy(src)
+            with pytest.raises(ValueError,match='positive finite'):
+                strat({'bars':[{'open':100,'high':100,'low':100,'close':100,'volume':1,'ts':0}],
+                      'target':0,'position':0})
+        else:
+            strat=PineSubsetStrategy(src)
+            with pytest.raises(ValueError,match='Unsupported strategy.exit'):
+                strat({'bars':[{'open':100,'high':100,'low':100,'close':100,'volume':1,'ts':0}],
+                       'target':0,'position':0})

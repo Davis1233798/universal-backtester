@@ -135,6 +135,7 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
     total_fees = 0.0
     total_funding = 0.0
     pending_target: float | None = None
+    protective_exit: dict | None = None
     live_target = 0.0
     recent = []
     fills: list[dict] = []
@@ -146,12 +147,13 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
     def equity_at(price: float) -> float:
         return wallet + position * (price - entry)
 
-    def fill(ts: int, price: float, delta: float, why: str):
+    def fill(ts: int, price: float, delta: float, why: str, *, slip_bps: float | None = None):
         nonlocal wallet, position, entry, entry_ts, total_fees
         nonlocal open_entry_fees, open_funding
         if abs(delta) < 1e-12:
             return
-        fill_price = price * (1 + math.copysign(risk.slippage_bps / 10000, delta))
+        applied_slip = risk.slippage_bps if slip_bps is None else slip_bps
+        fill_price = price * (1 + math.copysign(applied_slip / 10000, delta))
         fee = abs(delta * fill_price) * risk.fee_bps/10000
         old = position
         closing = min(abs(old), abs(delta)) if old * delta < 0 else 0.0
@@ -207,6 +209,33 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
                     live_target = target
                 pending_target = None
 
+            # Execute prior-close protective orders during this bar, after
+            # the next-open signal fill. If both bounds are touched, assume
+            # the stop happened first: OHLC has no intra-bar chronology.
+            if position and protective_exit:
+                stop=protective_exit.get("stop")
+                limit=protective_exit.get("limit")
+                long=position>0
+                stop_hit=(stop is not None and
+                          (b.low<=stop if long else b.high>=stop))
+                limit_hit=(limit is not None and
+                           (b.high>=limit if long else b.low<=limit))
+                if stop_hit or limit_hit:
+                    # A gap through the stop executes at the worse open.
+                    # Favorable gap through a limit fills at the open, without
+                    # charging adverse slippage on the passive limit fill.
+                    if stop_hit:
+                        execution=(min(b.open,stop) if long
+                                   else max(b.open,stop))
+                        fill(b.ts,execution,-position,"stop_market")
+                    else:
+                        execution=(max(b.open,limit) if long
+                                   else min(b.open,limit))
+                        fill(b.ts,execution,-position,"take_profit_limit",slip_bps=0)
+                    live_target=0.0
+                    pending_target=None
+                    protective_exit=None
+
             # OHLC-only liquidation approximates an adverse movement at the extreme.
             if risk.product_type in ("perp", "future") and position:
                 worst = b.low if position > 0 else b.high
@@ -237,6 +266,12 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
             ctx = {"bars": context_bars, "target": live_target, "position": position,
                    "wallet": wallet, "equity": current_equity, "timeframe": timeframe}
             target = float(strategy(ctx))
+            event = getattr(strategy, "order_event", None)
+            if isinstance(event, dict):
+                if event.get("cancel"):
+                    protective_exit = None
+                else:
+                    protective_exit = dict(event)
             if not math.isfinite(target) or not -1 <= target <= 1:
                 raise ValueError("strategy target must be finite and in [-1, 1]")
             if risk.product_type in ("spot", "equity") and target < 0:
@@ -259,7 +294,9 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
                     "Equity uses close marks; one-position netting; no liquidity constraints, corporate-action cash flows or portfolio rebalancing.",
                     "Sharpe/Sortino annualization approximates trading hours; no risk-free-rate adjustment.",
                     "Profit factor, win rate and average trade use realized NET P&L after allocated fees and funding; partial exits count as separate trades.",
-                    "R requires r_reference_stop_pct. This is a reference stop-distance denominator only; NO real stop is executed."]}
+                    "Protective stop-market and take-profit limit are activated on the next candle. A gap through a stop fills at its worse open; concurrent OHLC hits assume the stop first.",
+                    "No order book, partial fills, trailing/stop-limit orders, tick/lot-size constraints or exchange-specific liquidation tiers.",
+                    "R requires r_reference_stop_pct as a reporting denominator only; order stops do not automatically define 1R."]}
     finally:
         if hasattr(strategy, "close"):
             strategy.close()
