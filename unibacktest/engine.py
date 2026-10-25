@@ -7,15 +7,19 @@ from .model import Bar, Risk, INTERVALS, normalize
 
 def _metrics(equity: list[dict], closed: list[dict], fees: float, funding: float,
              risk: Risk, timeframe: str) -> dict:
+    """Closed trades use NET P&L; partial exits count as individual closed slices.
+    R needs an explicit reporting reference stop distance, NOT an active stop.
+    """
     values = [x["equity"] for x in equity]
     if not values:
         raise ValueError("empty equity")
     peak = values[0]
-    dd = 0.0
+    dd, dd_money = 0.0, 0.0
     for x in values:
         peak = max(peak, x)
         if peak > 0:
             dd = max(dd, (peak - x)/peak)
+        dd_money = max(dd_money, peak-x)
     gains = [values[i]/values[i-1]-1 for i in range(1, len(values)) if values[i-1] > 0]
     trading_days = 252 if risk.market == "stock" else 365
     if timeframe in ("1d", "3d", "1w"):
@@ -23,24 +27,68 @@ def _metrics(equity: list[dict], closed: list[dict], fees: float, funding: float
     else:
         days = 6.5 if risk.market == "stock" else 24
         period_year = trading_days * days * 3600000/INTERVALS[timeframe]
-    sharpe = None
+    sharpe, sortino, vol = None, None, None
     if len(gains) >= 2:
         avg = sum(gains)/len(gains)
         std = math.sqrt(sum((r-avg)**2 for r in gains)/(len(gains)-1))
         if std > 0:
             sharpe = avg/std * math.sqrt(period_year)
-    duration_year = max((equity[-1]["ts"] - equity[0]["ts"]) / (365.25*86400000), 0)
-    initial = risk.initial_cash
-    last = values[-1]
-    cagr = ((last / initial)**(1/duration_year)-1) if duration_year > 0 and last > 0 else None
-    return {"initial_equity": initial, "final_equity": round(last, 6),
+            vol = std*math.sqrt(period_year)*100
+        downside = math.sqrt(sum(min(0, r)**2 for r in gains)/len(gains))
+        if downside > 0:
+            sortino = avg/downside * math.sqrt(period_year)
+    years = max((equity[-1]["ts"] - equity[0]["ts"])/(365.25*86400000), 0)
+    initial, last = risk.initial_cash, values[-1]
+    cagr = ((last/initial)**(1/years)-1) if years > 0 and last > 0 else None
+    pnls = [x["net_pnl"] for x in closed]
+    winners = [x for x in pnls if x > 0]
+    losers = [x for x in pnls if x < 0]
+    total_profit, total_loss = sum(winners), -sum(losers)
+    pf = total_profit/total_loss if total_loss > 0 else None
+    if not pnls:
+        pf_status = "no_closed_trades"
+    elif not losers:
+        pf_status = "no_losses" if winners else "no_wins_or_losses"
+    else:
+        pf_status = "calculated"
+    avg_win = total_profit/len(winners) if winners else None
+    avg_loss = total_loss/len(losers) if losers else None
+    rs = [x["r_multiple"] for x in closed if x["r_multiple"] is not None]
+    exposure = sum(abs(x.get("position", 0)) > 1e-12 for x in equity)/len(equity)
+    win_streak = loss_streak = max_wins = max_losses = 0
+    for pnl in pnls:
+        win_streak = win_streak+1 if pnl > 0 else 0
+        loss_streak = loss_streak+1 if pnl < 0 else 0
+        max_wins = max(max_wins, win_streak)
+        max_losses = max(max_losses, loss_streak)
+    def rounded(x):
+        return round(x, 6) if x is not None and math.isfinite(x) else None
+    return {"initial_equity": initial, "final_equity": rounded(last),
+            "net_profit": rounded(last-initial),
             "return_pct": round((last/initial-1)*100, 4),
             "cagr_pct": round(cagr*100, 4) if cagr is not None else None,
             "max_drawdown_pct": round(dd*100, 4),
+            "max_drawdown_amount": rounded(dd_money),
             "sharpe": round(sharpe, 4) if sharpe is not None else None,
+            "sortino": rounded(sortino), "annual_volatility_pct": rounded(vol),
+            "calmar": rounded(cagr/dd) if cagr is not None and dd > 0 else None,
+            "exposure_pct": round(exposure*100, 4),
             "closed_trades": len(closed),
-            "win_rate_pct": round(sum(x["gross_pnl"] > 0 for x in closed) / len(closed)*100, 4) if closed else None,
-            "fees_paid": round(fees, 6), "funding_paid_net": round(funding, 6)}
+            "winning_trades": len(winners), "losing_trades": len(losers),
+            "breakeven_trades": len(closed)-len(winners)-len(losers),
+            "win_rate_pct": round(len(winners)/len(closed)*100, 4) if closed else None,
+            "profit_factor": rounded(pf), "profit_factor_status": pf_status,
+            "gross_profit_net": rounded(total_profit), "gross_loss_net_abs": rounded(total_loss),
+            "average_trade_net": rounded(sum(pnls)/len(pnls)) if pnls else None,
+            "average_win_net": rounded(avg_win), "average_loss_net_abs": rounded(avg_loss),
+            "payoff_ratio": rounded(avg_win/avg_loss) if avg_win is not None and avg_loss else None,
+            "largest_win_net": rounded(max(winners)) if winners else None,
+            "largest_loss_net": rounded(min(losers)) if losers else None,
+            "max_consecutive_wins": max_wins, "max_consecutive_losses": max_losses,
+            "recovery_factor": rounded((last-initial)/dd_money) if dd_money > 0 else None,
+            "average_r": rounded(sum(rs)/len(rs)) if rs else None,
+            "r_trades": len(rs), "r_reference_stop_pct": risk.r_reference_stop_pct,
+            "fees_paid": rounded(fees), "funding_paid_net": rounded(funding)}
 
 
 def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
@@ -59,6 +107,9 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
         raise ValueError("At least two bars required")
     position = 0.0
     entry = 0.0
+    entry_ts = None
+    open_entry_fees = 0.0
+    open_funding = 0.0
     wallet = risk.initial_cash
     total_fees = 0.0
     total_funding = 0.0
@@ -75,26 +126,50 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
         return wallet + position * (price - entry)
 
     def fill(ts: int, price: float, delta: float, why: str):
-        nonlocal wallet, position, entry, total_fees
+        nonlocal wallet, position, entry, entry_ts, total_fees
+        nonlocal open_entry_fees, open_funding
         if abs(delta) < 1e-12:
             return
         fill_price = price * (1 + math.copysign(risk.slippage_bps / 10000, delta))
         fee = abs(delta * fill_price) * risk.fee_bps/10000
         old = position
-        if old and old*delta < 0:
-            closing = min(abs(old), abs(delta))
+        closing = min(abs(old), abs(delta)) if old * delta < 0 else 0.0
+        close_fee = fee * closing / abs(delta) if closing else 0.0
+        if closing:
+            fraction = closing/abs(old)
             pnl = math.copysign(closing, old) * (fill_price-entry)
+            entry_fee_share = open_entry_fees*fraction
+            funding_share = open_funding*fraction
+            net = pnl - entry_fee_share - close_fee - funding_share
+            risk_amount = (closing * entry * risk.r_reference_stop_pct/100
+                           if risk.r_reference_stop_pct is not None else None)
+            closed.append({"ts": ts, "entry_ts": entry_ts, "entry_price": round(entry, 8),
+                           "exit_price": round(fill_price, 8),
+                           "qty": round(math.copysign(closing, old), 8),
+                           "gross_pnl": round(pnl, 8),
+                           "entry_fee": round(entry_fee_share, 8),
+                           "exit_fee": round(close_fee, 8),
+                           "funding_paid_net": round(funding_share, 8),
+                           "net_pnl": round(net, 8),
+                           "initial_risk": round(risk_amount, 8) if risk_amount else None,
+                           "r_multiple": round(net/risk_amount, 8) if risk_amount else None,
+                           "reason": why})
             wallet += pnl
-            closed.append({"ts": ts, "gross_pnl": round(pnl, 8), "reason": why})
+            open_entry_fees -= entry_fee_share
+            open_funding -= funding_share
         wallet -= fee
         total_fees += fee
         new = old + delta
         if abs(new) < 1e-12:
-            new, entry = 0.0, 0.0
+            new, entry, entry_ts = 0.0, 0.0, None
+            open_entry_fees = open_funding = 0.0
         elif old == 0 or old*new < 0:
-            entry = fill_price
+            entry, entry_ts = fill_price, ts
+            open_entry_fees = fee-close_fee
+            open_funding = 0.0
         elif abs(new) > abs(old) and old*delta > 0:
             entry = (abs(old)*entry + abs(delta)*fill_price)/abs(new)
+            open_entry_fees += fee
         position = new
         fills.append({"ts": ts, "price": round(fill_price, 8), "qty": round(delta, 8),
                       "fee": round(fee, 8), "reason": why, "position_after": round(position, 8)})
@@ -126,6 +201,7 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
                 payment = position * b.close * b.funding_rate
                 wallet -= payment
                 total_funding += payment
+                open_funding += payment
 
             current_equity = equity_at(b.close)
             equity.append({"ts": b.ts, "equity": round(current_equity, 8),
@@ -158,7 +234,9 @@ def run_backtest(bars: list[Bar], strategy, risk: Risk, timeframe: str = "1d",
                     "One linear-quoted instrument; spot/equity cannot short or lever.",
                     "Funding only charged for explicit nonzero funding_rate candle values; zero/missing are indistinguishable.",
                     "Equity uses close marks; one-position netting; no liquidity constraints, corporate-action cash flows or portfolio rebalancing.",
-                    "Sharpe annualization approximates trading hours; no risk-free-rate adjustment."]}
+                    "Sharpe/Sortino annualization approximates trading hours; no risk-free-rate adjustment.",
+                    "Profit factor, win rate and average trade use realized NET P&L after allocated fees and funding; partial exits count as separate trades.",
+                    "R requires r_reference_stop_pct. This is a reference stop-distance denominator only; NO real stop is executed."]}
     finally:
         if hasattr(strategy, "close"):
             strategy.close()

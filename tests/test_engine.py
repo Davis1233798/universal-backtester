@@ -62,3 +62,68 @@ def test_invalid_candle():
 def test_builtin_sma_signal():
     st=BuiltinStrategy('sma_cross',{'fast':2,'slow':3})
     assert st({'bars':[b.to_dict() for b in bars([1,2,3])],'target':0})==1
+
+
+def test_profit_factor_and_average_r_are_net():
+    from unibacktest.model import Bar
+    prices = [100, 100, 110, 100, 90, 90]
+    candles = [Bar(i*D,p,p,p,p,1) for i,p in enumerate(prices)]
+    responses=iter([1,0,1,0,0])
+    result=run_backtest(candles,lambda _: next(responses),
+        Risk(product_type='spot',fee_bps=0,slippage_bps=0,r_reference_stop_pct=10))
+    trades=result['closed_trades']
+    assert len(trades)==2
+    assert trades[0]['net_pnl']==pytest.approx(1000)
+    assert trades[1]['net_pnl']==pytest.approx(-1100)
+    m=result['metrics']
+    assert m['profit_factor']==pytest.approx(1000/1100,abs=1e-6)
+    assert m['profit_factor_status']=='calculated'
+    assert m['win_rate_pct']==50
+    assert trades[0]['r_multiple']==1
+    assert trades[1]['r_multiple']==-1
+    assert m['average_r']==0
+    assert m['net_profit']==pytest.approx(-100)
+
+
+def test_fees_and_funding_reduce_trade_net_and_r():
+    candles=[Bar(0,100,100,100,100,1),Bar(D,100,100,100,100,1,.01),
+             Bar(2*D,100,100,100,100,1)]
+    res=run_backtest(candles,lambda _:1,
+        Risk(product_type='perp',fee_bps=100,slippage_bps=0,r_reference_stop_pct=10))
+    t=res['closed_trades'][0]
+    assert t['gross_pnl']==0
+    assert t['entry_fee']==pytest.approx(100)
+    assert t['exit_fee']==pytest.approx(100)
+    assert t['funding_paid_net']==pytest.approx(100)
+    assert t['net_pnl']==pytest.approx(-300)
+    assert t['r_multiple']==pytest.approx(-.3)
+    assert res['metrics']['profit_factor']==0
+    assert res['metrics']['win_rate_pct']==0
+    assert res['metrics']['average_r']==-.3
+
+
+def test_profit_factor_no_losses_and_r_undefined_without_reference():
+    res=run_backtest([Bar(i*D,p,p,p,p,1) for i,p in enumerate([100,100,110])],
+        lambda _:1, Risk(product_type='spot',fee_bps=0,slippage_bps=0))
+    assert res['metrics']['profit_factor'] is None
+    assert res['metrics']['profit_factor_status']=='no_losses'
+    assert res['metrics']['average_r'] is None
+    assert res['closed_trades'][0]['r_multiple'] is None
+
+
+def test_r_reporting_reference_validation():
+    for pct in (0,101,float('nan')):
+        with pytest.raises(ValueError,match='r_reference_stop_pct'):
+            Risk(r_reference_stop_pct=pct).validate()
+
+
+def test_partial_closes_allocate_entry_and_exit_fees():
+    candles=[Bar(i*D,100,100,100,100,1) for i in range(5)]
+    choices=iter([1,.5,0,0])
+    res=run_backtest(candles,lambda _:next(choices),
+        Risk(product_type='perp',fee_bps=100,slippage_bps=0,r_reference_stop_pct=5))
+    trades=res['closed_trades']
+    assert len(trades)==2
+    assert sum(t['net_pnl'] for t in trades)==pytest.approx(res['metrics']['net_profit'],abs=.0001)
+    assert sum(t['entry_fee'] for t in trades)==pytest.approx(100)
+    assert sum(t['exit_fee'] for t in trades)==pytest.approx(res['metrics']['fees_paid']-100)

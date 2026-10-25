@@ -64,8 +64,11 @@ class Risk:
     product_type: str = "perp"      # perp, future, spot, equity
     market: str = "crypto"           # crypto, stock
     force_close: bool = True
+    r_reference_stop_pct: float | None = None  # Reporting-only risk reference, not an order
 
     def validate(self):
+        if self.r_reference_stop_pct is not None and (not isfinite(self.r_reference_stop_pct) or not 0 < self.r_reference_stop_pct <= 100):
+            raise ValueError('r_reference_stop_pct must be in (0, 100] or omitted')
         if self.initial_cash <= 0 or self.leverage < 1 or self.leverage > 125:
             raise ValueError("initial_cash must be positive; leverage must be in [1, 125]")
         if not (0 <= self.fee_bps <= 1000 and 0 <= self.slippage_bps <= 1000):
