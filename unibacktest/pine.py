@@ -156,6 +156,9 @@ class PineSubsetStrategy:
     def __init__(self, code: str, inputs: dict | None = None):
         self.history_all = True
         self.body, self.persistent = parse_pine(code)
+        if inputs and (not isinstance(inputs, dict) or len(inputs) > 30):
+            raise ValueError('Pine inputs must be an object of at most 30 entries')
+        self.inputs = inputs or {}
         self.history_depth = max(
             (node.slice.value for statement in self.body for node in ast.walk(statement)
              if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
@@ -190,9 +193,6 @@ class PineSubsetStrategy:
         # max; full-history mode still supports them.
         self.streaming_window=None if dynamic else max(
             500,self.history_depth+2,max(periods,default=1)+110)
-        if inputs and (not isinstance(inputs, dict) or len(inputs) > 30):
-            raise ValueError('Pine inputs must be an object of at most 30 entries')
-        self.inputs = inputs or {}
         self.variables: dict[str, Any] = {}
         self.history: dict[str, list[Any]] = {}
         self._initialized: set[str] = set()
