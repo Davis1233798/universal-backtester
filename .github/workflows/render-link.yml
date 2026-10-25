@@ -1,0 +1,66 @@
+name: Render deployment URL
+
+# A separate workflow avoids a deadlock with Render auto-deploy After CI Checks Pass.
+on:
+  workflow_run:
+    workflows: ["CI / CD"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  live-link:
+    name: Verify Render is live and publish URL
+    if: ${{ github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify deployed commit and link to running app
+        env:
+          RENDER_SITE_URL: ${{ vars.RENDER_SITE_URL }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, time, urllib.parse, urllib.request
+          summary = pathlib.Path(os.environ['GITHUB_STEP_SUMMARY'])
+          url = os.environ.get('RENDER_SITE_URL', '').strip().rstrip('/')
+          sha = os.environ['TARGET_SHA']
+          if not url:
+              with summary.open('a') as f:
+                  f.write('## Render URL not configured\\n\\n')
+                  f.write('Set Actions variable \`RENDER_SITE_URL\` to the actual Render public URL. '
+                          'Do not treat a successful build as a successful deploy.\\n')
+              print('RENDER_SITE_URL not configured; cannot verify live deployment')
+              raise SystemExit(0)
+          parts = urllib.parse.urlsplit(url)
+          if (parts.scheme != 'https' or not parts.hostname or
+              not parts.hostname.endswith('.onrender.com') or
+              parts.username or parts.password or parts.path or parts.query or parts.fragment):
+              raise SystemExit('RENDER_SITE_URL must be https://<actual-service>.onrender.com')
+          endpoint = url + '/api/health'
+          issue = 'No response yet'
+          for attempt in range(48):
+              try:
+                  request = urllib.request.Request(endpoint, headers={'Cache-Control':'no-cache'})
+                  with urllib.request.urlopen(request, timeout=12) as resp:
+                      payload = json.load(resp)
+                  if payload.get('ok') is True and payload.get('deployed_commit') == sha:
+                      with summary.open('a') as f:
+                          f.write('## Render deployment verified LIVE\\n\\n')
+                          f.write(f'**[Open Universal Backtester on Render]({url})**\\n\\n')
+                          f.write(f'- Deployed commit: \`{sha}\`\\n')
+                          f.write(f'- [Health check]({endpoint})\\n')
+                      print('Verified live Render URL:', url)
+                      break
+                  issue = 'Waiting for commit '+sha+'; current '+str(payload.get('deployed_commit'))
+              except (OSError, ValueError) as exc:
+                  issue = str(exc)
+              print(issue)
+              if attempt < 47:
+                  time.sleep(15)
+          else:
+              with summary.open('a') as f:
+                  f.write('## Render deployment not confirmed\\n\\n')
+                  f.write(f'Expected \`{sha}\` at {url}. Last check: {issue}.\\n')
+              raise SystemExit('Render deployment not verified for this commit')
+          PY

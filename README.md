@@ -300,3 +300,32 @@ CCXT 的 `spot`、`swap`、`future` 市場類型可分別搜尋，
 全球所有加密幣與所有股票都有完整免費歷史行情**。
 公開 Render 示範模式的 `/api/markets` 禁用，僅私有完整版可查。
 
+
+
+## 11. 回測績效指標、R 倍數與每次 Render 部署網址
+
+- 最大回撤（MDD）是收盤資產權益自歷史最高點至後續低點的最大百分比及金額；收盤 K 線不能觀察盤中的真實資產高低。
+- **營利因子 PF** = 所有已平倉、扣除分攤進出場費用及資金費後的正淨損益總和 ÷ 負淨損益的絕對值總和。沒有負淨損益時傳回 `null`，不顯示假造的無限大。
+- **勝率** = 淨損益大於 0 的平倉筆數 ÷ 全部平倉筆數，打平的平倉仍計入分母。部分減倉會各自計為一筆平倉，不代表完整策略的 round-trip 筆數。
+- **平均 R** = 各筆已平倉淨損益 ÷ 該筆平倉部位名義本金 × `r_reference_stop_pct/100`，再取簡單平均。這個參數是可自行填寫的「1R 參考停損距離 (%)」，**僅作為分析分母，不會觸發真實停損**，也不會自動讀取 Pine 裡的 `strategy.exit`。留空時 R 指標傳回 `null`，避免把沒有停損基準的交易錯當成可計算 R。部分平倉分攤既有的進場手續費和資金費。
+- 其他指標：淨利、總報酬、年化 CAGR、Sharpe、Sortino、Calmar、交易筆數、淨損益期望值、平均獲利／虧損、盈虧比、連勝／連敗、持倉曝光率與費用。
+- **重要**：這些是目前線性單商品 K 線撮合模型的指標，不能取代真實市場中下單、滑價、停損和歷史行情正確性的驗證。
+
+每次推送 `main` 且 `CI / CD` 通過後，GitHub Actions 的
+**Render deployment URL** 工作流程會檢查 Render 網站的 `/api/health`，
+等它回報的 `deployed_commit` 與此次 GitHub Commit SHA **完全相同**，
+才在工作流程 Summary 顯示可點擊的「Open Universal Backtester on Render」連結。
+CI 通過不等於 Render 部署完成，因此這是獨立工作流程，不會讓 Render
+的 `autoDeployTrigger: checksPass` 出現相互等待。
+
+**必須完成一次設定：** 在 GitHub repository 的 **Settings → Secrets and variables → Actions → Variables**
+新增變數 `RENDER_SITE_URL`，填入 Render Dashboard 中實際顯示的
+`https://<實際服務名稱>.onrender.com` 網址。此變數是公開網址，
+不能填入包含私密 token 的 Deploy Hook；實際服務必須綁定 `main`，
+並在 Render 中設定 **After CI Checks Pass** 自動部署。
+沒設定時只顯示「Render URL not configured」，不會憑空猜一個網址。
+如果 Render 一直沒有部署對應 SHA，工作流程會提示尚未完成並保持失敗狀態，
+避免將舊版網址誤報為新版成功部署。
+
+網站在 Render 上執行時，也會在頁首自動顯示目前真實的
+`location.origin` 連結，以便複製網址。

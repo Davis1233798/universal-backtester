@@ -109,7 +109,8 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": "0.1.0", "public_demo": public_demo()}
+    return {"ok": True, "version": "0.1.0", "public_demo": public_demo(),
+            "deployed_commit": os.environ.get("RENDER_GIT_COMMIT")}
 
 
 @app.get("/api/sources")

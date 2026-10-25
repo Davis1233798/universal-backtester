@@ -15,7 +15,7 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 @media(max-width:900px){.layout{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:500px){body{padding:0 12px 24px}.grid{grid-template-columns:1fr}.form{grid-template-columns:1fr}.span{grid-column:auto}}
 [hidden]{display:none!important}</style></head><body><main>
-<header><h1>Universal Backtester</h1><small>v0.1 · Local-first · Research / Backtesting only</small></header>
+<header><h1>Universal Backtester</h1><small>v0.1 · Local-first · Research / Backtesting only</small><small id="renderUrlLink" hidden></small></header>
 <p class="sub">CEX/DEX/股票歷史行情 · 下一根開盤成交 · 策略回測 · 每日排程</p>
 <div class="layout"><div>
 <section><h2>回測設定</h2><div class="form">
@@ -42,6 +42,7 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 <div class="actions"><input type="file" id="pineFile" accept=".pine,.txt,text/plain" aria-label="匯入 .pine 檔"><button type="button" class="secondary" id="pineExample">載入均線策略範例</button></div>
 <small>預設開啟 Pine 編輯器；若要使用 SMA、RSI、突破等內建策略，可在上方「策略」切換。安全相容子集：input、ta.sma/ema/rsi/highest/lowest、crossover/crossunder、if、strategy.entry/close。尚未支援 strategy.exit 停損限價、request.security、陣列或 TradingView 完整撮合語意。公開版每次最多 700 根 K 線。</small>
 </div>
+<div class="span"><label for="rRef">1R 參考停損距離（進場價格 %，留空不計算 R）</label><input id="rRef" type="number" min="0.01" max="100" step="0.01" placeholder="例如 2 = 假設每筆起始止損距離 2%"><small>僅用於計算 R 倍數；不會自動掛停損單，亦不代表 Pine 策略內的實際停損。</small></div>
 <div><label>最大槓桿</label><input id="leverage" type="number" min="1" max="125" step="1" value="1"></div>
 <div><label>起始資金</label><input id="capital" type="number" min="1" value="10000"></div>
 <div><label>單邊手續費（bps）</label><input id="fee" type="number" min="0" step="0.1" value="6"></div>
@@ -52,9 +53,10 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 </div><div class="actions"><button id="go">執行回測</button><button class="secondary" id="schedule">新增每日任務</button></div><p class="status" id="status"></p></section>
 <section><h2>注意事項</h2><small>合成示範數據不是市場報價。合約資金費率需在 CSV 的 funding_rate 欄位提供；若缺少資金費率會提示警告。此版本不模擬限價撮合、組合保證金與逐筆成交；不提供實盤下單。服務僅供本機使用。</small></section>
 </div><div>
-<section><h2>績效總覽</h2><div id="metrics" class="grid"><div class="metric">尚未執行回測</div></div><div id="warnings"></div></section>
+<section><h2>績效總覽</h2><div id="metrics" class="grid"><div class="metric">尚未執行回測</div></div><p id="metricNotes" class="status">PF、勝率與平均 R 等指標將在回測後顯示。</p><div id="warnings"></div></section>
 <section><h2>資金曲線</h2><svg id="plot" viewBox="0 0 840 300" role="img" aria-label="Equity curve"><text x="30" y="145" fill="#95a8c4">執行回測後顯示資金曲線</text></svg></section>
 <section><h2>交易紀錄</h2><div class="table-scroll"><table><thead><tr><th>時間（UTC）</th><th>方向 / 數量</th><th>成交價</th><th>費用</th><th>原因</th></tr></thead><tbody id="fills"></tbody></table></div></section>
+<section><h2>平倉交易統計</h2><div class="table-scroll"><table><thead><tr><th>平倉時間 UTC</th><th>方向/數量</th><th>毛損益</th><th>手續費</th><th>資金費</th><th>淨損益</th><th>R 倍數</th></tr></thead><tbody id="closedRows"></tbody></table></div></section>
 <section><h2>每日任務</h2><p>排程必須額外啟動 <code>ubt scheduler</code>；預設每日台灣時間 08:00。</p><button id="reload" class="secondary">更新任務清單</button><div id="jobs"></div></section>
 </div></div></main>
 <script>
@@ -64,7 +66,8 @@ function config(){ const p=$('provider').value, product=$('product').value;
   return {data:{provider:p,exchange:$('exchange').value,symbol:$('symbol').value,timeframe:$('timeframe').value,
       start:$('start').value,end:$('end').value,csv_path:$('csv').value,market_type:$('marketType').value,include_funding:$('funding').checked},
     risk:{product_type:product,market:product==='equity'?'stock':'crypto',leverage:Number($('leverage').value),
-      initial_cash:Number($('capital').value),fee_bps:Number($('fee').value),slippage_bps:Number($('slippage').value)},
+      initial_cash:Number($('capital').value),fee_bps:Number($('fee').value),slippage_bps:Number($('slippage').value),
+      r_reference_stop_pct:$('rRef').value.trim()===''?null:Number($('rRef').value)},
     strategy:$('strategy').value==='pine'?{type:'pine',code:$('pineCode').value}:{type:'builtin',name:$('strategy').value,options:{fast:10,slow:30}},refresh:$('refresh').checked};
 }
 $('provider').addEventListener('change',()=>{
@@ -87,12 +90,48 @@ function curve(points){const svg=$('plot');if(!points?.length)return;const width
   elem('text',{x:width-130,y:height-8,fill:'#a3b8cf','font-size':11},new Date(points.at(-1).ts).toISOString().slice(0,10));
 }
 function render(res){
-  const m=res.metrics;const values=[['最終權益',fmt(m.final_equity)],['總報酬',fmt(m.return_pct)+'%'],['年化 CAGR',m.cagr_pct===null?'—':fmt(m.cagr_pct)+'%'],
-    ['最大回撤',fmt(m.max_drawdown_pct)+'%'],['Sharpe',fmt(m.sharpe)],['交易平倉次數',fmt(m.closed_trades)],
-    ['勝率',m.win_rate_pct===null?'—':fmt(m.win_rate_pct)+'%'],['手續費',fmt(m.fees_paid)],['資金費',fmt(m.funding_paid_net)]];
-  $('metrics').replaceChildren(...values.map(([key,value])=>{const el=document.createElement('div');el.className='metric';
+  const m=res.metrics;
+  const value=(v,suffix='')=>v===null||v===undefined?'—':fmt(v)+suffix;
+  const pf=m.profit_factor_status==='no_losses'?'—（無虧損）':value(m.profit_factor);
+  const r=m.average_r===null?'—（未設定 1R）':fmt(m.average_r)+' R';
+  const values=[
+    ['最終權益',value(m.final_equity),'回測結束時資產權益'],
+    ['淨利',value(m.net_profit),'最終權益減起始資金'],
+    ['總報酬',value(m.return_pct,'%'),'回測區間總報酬'],
+    ['最大回撤',value(m.max_drawdown_pct,'%'),'以收盤權益計算的最大歷史高點至低點跌幅'],
+    ['最大回撤金額',value(m.max_drawdown_amount),'權益高峰至低點的最大金額差'],
+    ['年化 CAGR',value(m.cagr_pct,'%'),'以日曆經過時間計算'],
+    ['營利因子 PF',pf,'全部淨獲利交易的獲利總額 ÷ 全部淨虧損交易的虧損絕對值；沒有虧損時未定義'],
+    ['勝率',value(m.win_rate_pct,'%'),'淨獲利平倉數 ÷ 全部平倉數；已扣除交易費與資金費'],
+    ['平均 R',r,'每筆淨損益 ÷ (平倉數量 × 進場均價 × 1R 參考止損距離%)，再取平均；非真實觸發停損'],
+    ['平均每筆淨損益',value(m.average_trade_net),'扣除進出場手續費及分攤資金費'],
+    ['平均獲利',value(m.average_win_net),'獲利平倉淨損益平均'],
+    ['平均虧損（絕對值）',value(m.average_loss_net_abs),'虧損平倉的平均絕對金額'],
+    ['盈虧比',value(m.payoff_ratio),'平均獲利 ÷ 平均虧損絕對值'],
+    ['Sharpe',value(m.sharpe),'年化 Sharpe；假設無風險利率為零'],
+    ['Sortino',value(m.sortino),'年化下行波動風險調整報酬'],
+    ['Calmar',value(m.calmar),'年化 CAGR ÷ 最大回撤百分比'],
+    ['已平倉次數',value(m.closed_trades),'每次部分平倉亦計為一次；不是完整來回持倉數'],
+    ['獲利／虧損次數',fmt(m.winning_trades)+' / '+fmt(m.losing_trades),'淨損益大於／小於零的平倉次數'],
+    ['最大連勝／連敗',fmt(m.max_consecutive_wins)+' / '+fmt(m.max_consecutive_losses),'以平倉事件計算'],
+    ['持倉曝光率',value(m.exposure_pct,'%'),'收盤時有倉位的 K 線比例'],
+    ['手續費',value(m.fees_paid),'所有成交的費用'],
+    ['淨資金費',value(m.funding_paid_net),'正值代表支付，負值代表收到']
+  ];
+  $('metrics').replaceChildren(...values.map(([key,value,help])=>{const el=document.createElement('div');el.className='metric';el.title=help;
     const a=document.createElement('small');a.textContent=key;const b=document.createElement('b');b.textContent=value;el.append(a,b);return el}));
+  const note=$('metricNotes');
+  note.textContent='PF 與勝率使用扣除費用後的「已平倉交易」；部分平倉各算一筆。平均 R 只有設定上方 1R 參考停損距離才計算；此版本不會真的執行停損。';
   $('warnings').replaceChildren(...(res.warnings||[]).map(w=>{const d=document.createElement('div');d.className='warning';d.textContent=w;return d}));
+  const rows=$('closedRows');
+  rows.replaceChildren(...(res.closed_trades||[]).slice(-100).reverse().map(t=>{
+    const tr=document.createElement('tr');
+    [new Date(t.ts).toISOString().slice(0,16),fmt(t.qty),fmt(t.gross_pnl),
+     fmt((t.entry_fee||0)+(t.exit_fee||0)),fmt(t.funding_paid_net),fmt(t.net_pnl),
+     t.r_multiple===null?'—':fmt(t.r_multiple)+' R'].forEach(v=>{
+       const td=document.createElement('td');td.textContent=v;tr.appendChild(td);
+     });return tr;
+  }));
   curve(res.equity);const body=$('fills');body.replaceChildren(...res.fills.slice(-60).reverse().map(f=>{const tr=document.createElement('tr');
     [new Date(f.ts).toISOString().slice(0,16),fmt(f.qty),fmt(f.price),fmt(f.fee),f.reason].forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.appendChild(td)});return tr}));
 }
@@ -158,6 +197,13 @@ $('marketLookup').onclick=async()=>{
 $('marketResults').onchange=()=>{if($('marketResults').value)$('symbol').value=$('marketResults').value;};
 $('reload').onclick=loadJobs;
 async function initialize(){
+  if(location.hostname.endsWith('.onrender.com')){
+    const link=document.createElement('a');
+    link.href=location.origin;
+    link.textContent='目前 Render 網址：'+location.origin;
+    const box=$('renderUrlLink');
+    box.replaceChildren(link);box.hidden=false;
+  }
   try{
     const sources=await api('/api/sources');
     if(Array.isArray(sources.ccxt_exchanges_installed)){
