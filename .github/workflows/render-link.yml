@@ -27,9 +27,9 @@ jobs:
           sha = os.environ['TARGET_SHA']
           if not url:
               with summary.open('a') as f:
-                  f.write('## Render URL not configured\\n\\n')
-                  f.write('Set Actions variable \`RENDER_SITE_URL\` to the actual Render public URL. '
-                          'Do not treat a successful build as a successful deploy.\\n')
+                  f.write('## Render URL not configured\n\n')
+                  f.write('Set Actions variable `RENDER_SITE_URL` to the actual Render public URL. '
+                          'Do not treat a successful build as a successful deploy.\n')
               print('RENDER_SITE_URL not configured; cannot verify live deployment')
               raise SystemExit(0)
           parts = urllib.parse.urlsplit(url)
@@ -46,10 +46,10 @@ jobs:
                       payload = json.load(resp)
                   if payload.get('ok') is True and payload.get('deployed_commit') == sha:
                       with summary.open('a') as f:
-                          f.write('## Render deployment verified LIVE\\n\\n')
-                          f.write(f'**[Open Universal Backtester on Render]({url})**\\n\\n')
-                          f.write(f'- Deployed commit: \`{sha}\`\\n')
-                          f.write(f'- [Health check]({endpoint})\\n')
+                          f.write('## Render deployment verified LIVE\n\n')
+                          f.write(f'**[Open Universal Backtester on Render]({url})**\n\n')
+                          f.write(f'- Deployed commit: `{sha}`\n')
+                          f.write(f'- [Health check]({endpoint})\n')
                       print('Verified live Render URL:', url)
                       break
                   issue = 'Waiting for commit '+sha+'; current '+str(payload.get('deployed_commit'))
@@ -60,7 +60,7 @@ jobs:
                   time.sleep(15)
           else:
               with summary.open('a') as f:
-                  f.write('## Render deployment not confirmed\\n\\n')
-                  f.write(f'Expected \`{sha}\` at {url}. Last check: {issue}.\\n')
+                  f.write('## Render deployment not confirmed\n\n')
+                  f.write(f'Expected `{sha}` at {url}. Last check: {issue}.\n')
               raise SystemExit('Render deployment not verified for this commit')
           PY
