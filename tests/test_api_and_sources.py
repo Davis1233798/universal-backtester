@@ -150,3 +150,21 @@ def test_metrics_r_reference_ui_and_deployment_health(monkeypatch):
     assert 'id="closedRows"' in html
     monkeypatch.setenv('RENDER_GIT_COMMIT','abcdef012345')
     assert client.get('/api/health').json()['deployed_commit']=='abcdef012345'
+
+
+def test_private_backtest_sqlite_stream_mode(monkeypatch,tmp_path):
+    import unibacktest.storage as storage
+    db=str(tmp_path/'stream-test.sqlite3')
+    monkeypatch.setattr(storage,'DEFAULT_DB',db)
+    monkeypatch.delenv('UBT_PUBLIC_DEMO',raising=False)
+    from fastapi.testclient import TestClient
+    from unibacktest.api import app
+    client=TestClient(app)
+    cfg={'data':{'provider':'demo','symbol':'STREAM','start':'2024-01-01','end':'2024-04-01'},
+         'risk':{'product_type':'spot','fee_bps':0,'slippage_bps':0},
+         'strategy':{'type':'builtin','name':'buy_hold'},'streaming':True}
+    response=client.post('/api/backtests',json=cfg)
+    assert response.status_code==200,response.text
+    assert response.json()['streaming_preview_only']
+    assert response.json()['bars']==91
+    assert response.json()['coverage']['streaming_from_sqlite']

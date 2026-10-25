@@ -49,6 +49,8 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 <div><label>滑價（bps）</label><input id="slippage" type="number" min="0" step="0.1" value="2"></div>
 <div><label>週期商品設定</label><select id="marketType"><option value="swap">swap</option><option value="future">future</option><option value="spot">spot</option></select></div>
 <div class="span"><label><input type="checkbox" id="funding" style="width:auto"> 從 CCXT / Hyperliquid 擷取歷史資金費率（合約）</label></div>
+<div class="span" id="streamingMode"><label><input type="checkbox" id="streaming" style="width:auto"> 高資料量：使用 SQLite 串流回測（已快取歷史資料）</label>
+<small>回傳的是資金曲線縮減預覽，不會刪除原始 K 線；初次下載部分來源仍可能占用較多 RAM。</small></div>
 <div class="span"><label><input type="checkbox" id="refresh" style="width:auto"> 強制重新擷取資料（否則優先用快取）</label></div>
 </div><div class="actions"><button id="go">執行回測</button><button class="secondary" id="schedule">新增每日任務</button></div><p class="status" id="status"></p></section>
 <section><h2>注意事項</h2><small>合成示範數據不是市場報價。合約資金費率需在 CSV 的 funding_rate 欄位提供；若缺少資金費率會提示警告。此版本不模擬限價撮合、組合保證金與逐筆成交；不提供實盤下單。服務僅供本機使用。</small></section>
@@ -98,7 +100,8 @@ function config(){ const p=$('provider').value, product=$('product').value;
     risk:{product_type:product,market:product==='equity'?'stock':'crypto',leverage:Number($('leverage').value),
       initial_cash:Number($('capital').value),fee_bps:Number($('fee').value),slippage_bps:Number($('slippage').value),
       r_reference_stop_pct:$('rRef').value.trim()===''?null:Number($('rRef').value)},
-    strategy:$('strategy').value==='pine'?{type:'pine',code:$('pineCode').value}:{type:'builtin',name:$('strategy').value,options:{fast:10,slow:30}},refresh:$('refresh').checked};
+    strategy:$('strategy').value==='pine'?{type:'pine',code:$('pineCode').value}:{type:'builtin',name:$('strategy').value,options:{fast:10,slow:30}},refresh:$('refresh').checked,
+      streaming:$('streaming').checked};
 }
 $('provider').addEventListener('change',()=>{
   const p=$('provider').value;
@@ -297,7 +300,7 @@ $('batchRun').onclick=async()=>{
     const result=await post('/api/backtests/batch',{
       strategy:cfg.strategy,risk:cfg.risk,markets,
       workers:Number($('batchWorkers').value),chart_points:1000,
-      refresh:cfg.refresh
+      streaming:cfg.streaming,refresh:cfg.refresh
     });
     $('batchRows').replaceChildren(...result.results.map(r=>{
       const tr=document.createElement('tr'),m=r.result?.metrics||{};
@@ -379,6 +382,7 @@ async function initialize(){
       $('provider').disabled=true;
       $('market-demo-info').hidden=false;
       $('symbol').value='SYNTHETIC';
+      $('streamingMode').hidden=true;
       $('schedule').hidden=true;
       $('jobs').closest('section').hidden=true;
       $('catalog-picker').hidden=true;

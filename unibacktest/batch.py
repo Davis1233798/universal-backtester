@@ -108,7 +108,8 @@ def run_multi_market(config: dict) -> dict:
             raise ValueError(f"duplicate market identity: {identity!r}")
         seen.add(identity)
         builds.append({"data": data, "strategy": common_strategy,
-                       "risk": {**risk_base, **risk}, "refresh": bool(config.get("refresh", False))})
+                       "risk": {**risk_base, **risk}, "refresh": bool(config.get("refresh", False)),
+                       "streaming": bool(config.get("streaming", False))})
     # Initialize SQLite schema in the parent process to avoid concurrent DDL races.
     Store(os.environ.get('UBT_DB') or None)
     results: list[dict | None] = [None]*len(builds)

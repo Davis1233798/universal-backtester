@@ -171,3 +171,23 @@ def test_pine_strategy_exit_rejects_trailing_and_qty():
             with pytest.raises(ValueError,match='Unsupported strategy.exit'):
                 strat({'bars':[{'open':100,'high':100,'low':100,'close':100,'volume':1,'ts':0}],
                        'target':0,'position':0})
+
+
+def test_streaming_pine_deep_history_matches_regular():
+    from unibacktest.model import Bar,Risk
+    from unibacktest.engine import run_backtest
+    day=86400000
+    candles=[Bar(i*day,100+i*.01,100+i*.01,100+i*.01,100+i*.01,1.)
+             for i in range(1205)]
+    code='''//@version=6
+strategy("long period")
+period = input.int(1001, "period")
+ma = ta.sma(close, period)
+if not na(ma) and close[1000] > 0
+    strategy.entry("L",strategy.long)
+'''
+    a=run_backtest(candles,PineSubsetStrategy(code),Risk(product_type="spot",fee_bps=0,slippage_bps=0))
+    b=run_backtest(iter(candles),PineSubsetStrategy(code),
+                   Risk(product_type="spot",fee_bps=0,slippage_bps=0),streaming=True)
+    assert a["fills"][0]["ts"]==b["fills"][0]["ts"]==1001*day
+    assert a["metrics"]["final_equity"]==pytest.approx(b["metrics"]["final_equity"])

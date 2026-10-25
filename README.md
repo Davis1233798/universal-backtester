@@ -329,3 +329,47 @@ CI 通過不等於 Render 部署完成，因此這是獨立工作流程，不會
 
 網站在 Render 上執行時，也會在頁首自動顯示目前真實的
 `location.origin` 連結，以便複製網址。
+
+
+## 13. 依需求優先順序 1 → 5 → 3 → 2 → 4 的實作狀態
+
+### 1. 移除 Pine 500 根回看限制（完成初步實作）
+- 原生 Pine 相容子集允許 `close[1000]`、`ta.sma(close,1001)`；
+  歷史視窗由無複製的 as-of 讀取視圖提供，杜絕未來資料。
+- 串流模式會嘗試分析固定長度／`input.int` 週期，維持所需的有限回看緩衝；
+  無法推導長度的動態公式明確拒絕串流，改用完整歷史模式。
+- 其他 Pine API/AST/檔案大小資源安全限制仍存在；不等同 Pine v6 完整相容。
+
+### 5. 訂單撮合與風險（部分完成）
+- Pine `strategy.exit(stop=...,limit=...)` 支援單一淨倉位全數出場。
+  收盤送出、**下一根**生效；跳空停損採較差的開盤成交價。
+  同根同時觸及停損／停利採停損先發生，作為保守且可重現的 OHLC 假設。
+- 交易所原生訂單簿、分段成交、停損限價／追蹤停損、逐倉／全倉保證金、
+  不同合約乘數、鏈上 DEX Gas、強平階梯等**仍未實作**，不能宣稱精確撮合。
+
+### 3. 同時工作程序（本機上限移除）
+- 刪除硬編碼最多 32 程序；`workers` 可要求大於 32。
+- 真正同時啟動量=min(要求值, 主機 CPU 數, `UBT_MAX_LOCAL_WORKERS`, 工作數)；
+  其餘待執行工作在程序池佇列中。尚未實作多台主機分散式工作節點。
+
+### 2. SQLite 串流回測（部分完成）
+- `POST /api/backtests` 帶 `"streaming":true`；正式版網頁可勾選。
+  透過 SQLite cursor 每批讀取原始 K 線，使用增量波動統計與保留極值的
+  bounded preview 降低資產曲線記憶體需求，回傳標記
+  `"streaming_preview_only":true`。
+- 首次下載 CEX/DEX/CSV 仍可能一次在 RAM 累積資料；
+  成交與平倉紀錄亦尚未分頁持久化。正式海量歷史處理仍需
+  串流抓取寫入、Parquet/Arrow 與原生引擎。
+
+### 4. 跨交易所共同策略（研究型首版）
+- 新增 `POST /api/portfolio/backtests`，使用 `venues[]`、
+  `portfolio.initial_cash`、`gross_notional_fraction`，
+  統一時間戳執行跨交易所價差策略，直接持有兩個市場的多空腿。
+- 不同交易所共用模擬資金，按每家手續費和滑價估值；至少兩個市場；
+  市場 K 線缺漏即失敗，不補造行情。
+- `strategy.type="spread"` 以 `entry_bps`／`exit_bps` 控制價差；
+  `strategy.type="python"` 允許可信任主機的 `on_venues(ctx)->dict`
+  自訂共同策略，需 `UBT_ALLOW_EXEC=1`。匿名 Render Demo 不開放。
+- **未支援**完整 Pine `request.security` 跨市場語法、跨市場真實轉帳、
+  各家獨立保證金／鏈上 Gas、訂單簿撮合、幣別匯率正規化。
+  所有報告必須視為簡化的研究結果，不能等同可實際套利損益。
