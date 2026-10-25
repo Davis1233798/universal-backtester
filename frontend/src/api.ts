@@ -20,8 +20,19 @@ export class API {
     if(this.bearer) headers.set('Authorization',`Bearer ${this.bearer}`);
     if(init.body && !headers.has('Content-Type'))headers.set('Content-Type','application/json');
     let response:Response;
-    try {response=await fetch(path,{...init,headers,credentials:'omit',cache:'no-store'});}
-    catch {throw new Error('無法連接後端服務。請確認部署狀態及網路連線。')}
+    const request=()=>fetch(path,{...init,headers,credentials:'omit',cache:'no-store'});
+    try{response=await request();}
+    catch{
+      // Market chart reads can safely retry after a transient cold-start or 4G loss.
+      // Do not retry order/backtest/job POSTs that can have side effects.
+      if(!init.method||init.method==='GET'||path==='/api/candles/load'){
+        await new Promise(resolve=>setTimeout(resolve,1200));
+        try{response=await request();}
+        catch{throw new Error('網路連接失敗：無法聯繫目前網站的 API，請檢查網路或 Render 服務狀態。')}
+      }else{
+        throw new Error('網路連接失敗：回測 API 沒有回應；為避免重複提交，沒有自動重送工作。')
+      }
+    }
     const raw=await response.text();let body:unknown;
     try{body=raw?JSON.parse(raw):null}catch{body=raw}
     if(!response.ok){

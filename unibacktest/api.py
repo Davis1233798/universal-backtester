@@ -366,6 +366,13 @@ def load_market_candles(payload: CandleLoadPayload):
                 "cached": not needs_fetch}
     except (ValueError, RuntimeError, TimeoutError, ImportError, OSError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
+    except Exception as exc:
+        # Exchange adapters may raise provider-specific HTTP or CCXT errors.
+        # Surface a bounded error to the authenticated user, not a blank chart.
+        venue = str(payload.data.get("exchange") or payload.data.get("provider") or "market")
+        raise HTTPException(
+            502, detail=f"{venue} 行情供應商請求失敗（{type(exc).__name__}）：{str(exc)[:250]}"
+        ) from exc
 
 
 @app.get("/api/candles")
