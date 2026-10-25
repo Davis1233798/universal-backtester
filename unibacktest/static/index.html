@@ -14,7 +14,7 @@ svg{width:100%;height:auto;background:#101a2a;border-radius:8px}table{border-col
 .table-scroll{overflow:auto}a{color:#9dbdfd}pre{white-space:pre-wrap;word-break:break-word}header{display:flex;align-items:baseline;gap:12px}
 @media(max-width:900px){.layout{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:500px){body{padding:0 12px 24px}.grid{grid-template-columns:1fr}.form{grid-template-columns:1fr}.span{grid-column:auto}}
-[hidden]{display:none!important}</style></head><body><main>
+[hidden]{display:none!important}</style><script defer src="https://unpkg.com/lightweight-charts@5/dist/lightweight-charts.standalone.production.js"></script></head><body><main>
 <header><h1>Universal Backtester</h1><small>v0.1 · Local-first · Research / Backtesting only</small><small id="renderUrlLink" hidden></small></header>
 <p class="sub">CEX/DEX/股票歷史行情 · 下一根開盤成交 · 策略回測 · 每日排程</p>
 <div class="layout"><div>
@@ -68,6 +68,11 @@ hyperliquid,,BTC</textarea>
 <p id="batchNoAccess">公開示範模式禁止匿名查詢真實 CEX、DEX 和股票；並行比較只開放具存取控制的完整部署。</p>
 </section>
 <section><h2>績效總覽</h2><div id="metrics" class="grid"><div class="metric">尚未執行回測</div></div><p id="metricNotes" class="status">PF、勝率與平均 R 等指標將在回測後顯示。</p><div id="warnings"></div></section>
+<section><h2>歷史 K 線</h2>
+<p><small>圖表按可見範圍聚合，絕不影響回測的原始 K 線計算。完整版可選日期分段讀取。</small></p>
+<div id="candlesPlot" style="height:320px;min-width:0"><p id="candlesStatus" class="status">執行回測後載入 K 線</p></div>
+<button id="candlesReload" class="secondary" style="margin-top:8px">按目前日期範圍重新載入 K 線</button>
+</section>
 <section><h2>資金曲線</h2><svg id="plot" viewBox="0 0 840 300" role="img" aria-label="Equity curve"><text x="30" y="145" fill="#95a8c4">執行回測後顯示資金曲線</text></svg></section>
 <section><h2>交易紀錄</h2><div class="table-scroll"><table><thead><tr><th>時間（UTC）</th><th>方向 / 數量</th><th>成交價</th><th>費用</th><th>原因</th></tr></thead><tbody id="fills"></tbody></table></div></section>
 <section><h2>平倉交易統計</h2><div class="table-scroll"><table><thead><tr><th>平倉時間 UTC</th><th>方向/數量</th><th>毛損益</th><th>手續費</th><th>資金費</th><th>淨損益</th><th>R 倍數</th></tr></thead><tbody id="closedRows"></tbody></table></div></section>
@@ -102,6 +107,50 @@ function curve(points){const svg=$('plot');if(!points?.length)return;const width
   elem('path',{d:path,stroke:'#78b3ff','stroke-width':2.2,fill:'none'});
   elem('text',{x:pad,y:height-8,fill:'#a3b8cf','font-size':11},new Date(points[0].ts).toISOString().slice(0,10));
   elem('text',{x:width-130,y:height-8,fill:'#a3b8cf','font-size':11},new Date(points.at(-1).ts).toISOString().slice(0,10));
+}
+let candleChart, candleSeries;
+async function showCandles(res){
+  const status=$('candlesStatus');
+  if(!window.LightweightCharts){
+    status.textContent='K 線繪圖函式庫尚未載入，請確認瀏覽器能連線 unpkg.com。';
+    return;
+  }
+  let candles=res?.candles_preview;
+  if(!candles){
+    const cfg=config().data;
+    const params=new URLSearchParams({
+      provider:cfg.provider,exchange:cfg.exchange,symbol:cfg.symbol,
+      start:cfg.start,end:cfg.end,timeframe:cfg.timeframe,
+      market_type:cfg.market_type,include_funding:String(cfg.include_funding),
+      max_points:'1200'
+    });
+    const data=await api('/api/candles?'+params.toString());
+    candles=data.candles;
+    if(!candles?.length){status.textContent='所選時段沒有快取 K 線。請先回測下載歷史行情。';return;}
+    status.textContent='顯示 '+data.display_points+' 根聚合 K 線，代表 '+data.represented_bars+' 根完整歷史 K 線。';
+  }else{
+    status.textContent='合成行情：畫面縮減 K 線僅供顯示，原始資料已全數用於回測。';
+  }
+  const node=$('candlesPlot');
+  if(!candleChart){
+    candleChart=LightweightCharts.createChart(node,{
+      width:Math.max(350,node.clientWidth),height:320,
+      layout:{background:{color:'#101a2a'},textColor:'#aebed3'},
+      grid:{vertLines:{color:'#1e2b40'},horzLines:{color:'#24364f'}},
+      timeScale:{timeVisible:true,secondsVisible:false}
+    });
+    candleSeries=candleChart.addSeries(LightweightCharts.CandlestickSeries,{
+      upColor:'#26a69a',downColor:'#ef5350',borderVisible:false,
+      wickUpColor:'#26a69a',wickDownColor:'#ef5350'
+    });
+    if(window.ResizeObserver) new ResizeObserver(()=>candleChart.applyOptions({
+      width:Math.max(350,node.clientWidth)
+    })).observe(node);
+  }
+  candleSeries.setData(candles.map(b=>({
+    time:Math.floor(b.ts/1000),open:b.open,high:b.high,low:b.low,close:b.close
+  })));
+  candleChart.timeScale().fitContent();
 }
 function render(res){
   const m=res.metrics;
@@ -151,11 +200,16 @@ function render(res){
 }
 async function doTask(kind){const go=$(kind);go.disabled=true;$('status').textContent=kind==='go'?'回測執行中…':'建立排程任務中…';
   try{const res=await post(kind==='go'?'/api/backtests':'/api/jobs',config());
-      if(kind==='go'){render(res);$('status').textContent=`完成：${res.run_id}，${res.bars} 根 K 線`}
+      if(kind==='go'){render(res);showCandles(res).catch(err=>{
+        $('candlesStatus').textContent='K 線載入失敗：'+err.message;
+      });$('status').textContent=`完成：${res.run_id}，${res.bars} 根 K 線`}
       else{$('status').textContent=`已新增每日任務：${res.job_id}（須啟動 scheduler）`;loadJobs()}
   }catch(e){$('status').textContent=`錯誤：${e.message}`}
   finally{go.disabled=false}
 }
+$('candlesReload').onclick=()=>showCandles(null).catch(e=>{
+  $('candlesStatus').textContent='圖表載入失敗：'+e.message;
+});
 $('go').onclick=()=>doTask('go');$('schedule').onclick=()=>doTask('schedule');
 async function loadJobs(){try{const jobs=await api('/api/jobs');const el=$('jobs');el.replaceChildren(...jobs.map(j=>{const line=document.createElement('p');const btn=document.createElement('button');
   btn.style.width='auto';btn.style.marginLeft='12px';btn.textContent=j.active?'暫停':'啟用';btn.className='secondary';btn.onclick=async()=>{await api(`/api/jobs/${j.id}?active=${!j.active}`,{method:'PATCH'});loadJobs()};
