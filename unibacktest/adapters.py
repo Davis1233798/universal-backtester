@@ -83,9 +83,7 @@ def _ccxt_funding(exchange, req: DataRequest) -> list[tuple[int, float]]:
         raise CoverageError(f"{req.exchange}: historical funding API unavailable. Use CSV funding_rate.")
     events: dict[int,float] = {}
     since, end = iso_ms(req.start), iso_ms(req.end)
-    for _ in range(2000):
-        if since >= end:
-            break
+    while since < end:
         page = exchange.fetch_funding_rate_history(req.symbol, since=since, limit=1000)
         if not page:
             break
@@ -97,8 +95,7 @@ def _ccxt_funding(exchange, req: DataRequest) -> list[tuple[int, float]]:
         if nxt <= since:
             raise RuntimeError("funding rate pagination stalled")
         since = nxt
-    else:
-        raise CoverageError("Historical funding exceeds 2000 pages")
+
     if not events:
         raise CoverageError("No historical funding returned; check API range and exchange limitations")
     return sorted(events.items())
@@ -107,9 +104,7 @@ def _ccxt_funding(exchange, req: DataRequest) -> list[tuple[int, float]]:
 def _hyperliquid_funding(client: httpx.Client, req: DataRequest, coin: str) -> list[tuple[int,float]]:
     since, end = iso_ms(req.start), iso_ms(req.end)
     events: dict[int,float] = {}
-    for _ in range(2000):
-        if since >= end:
-            break
+    while since < end:
         response = client.post("https://api.hyperliquid.xyz/info", json={
             "type":"fundingHistory", "coin":coin, "startTime":since, "endTime":end})
         response.raise_for_status()
@@ -126,8 +121,7 @@ def _hyperliquid_funding(client: httpx.Client, req: DataRequest, coin: str) -> l
         if nxt <= since:
             raise RuntimeError("Hyperliquid funding pagination stalled")
         since = nxt
-    else:
-        raise CoverageError("Hyperliquid funding exceeds 2000 pages")
+
     if not events:
         raise CoverageError("No historical Hyperliquid funding returned")
     return sorted(events.items())
@@ -153,9 +147,7 @@ def from_ccxt(req: DataRequest) -> list[Bar]:
         start, end = iso_ms(req.start), iso_ms(req.end)
         since, step = start, INTERVALS[req.timeframe]
         out: list[Bar] = []
-        for _ in range(2000):
-            if since >= end:
-                break
+        while since < end:
             page = exchange.fetch_ohlcv(req.symbol, req.timeframe, since=since, limit=1000)
             if not page:
                 break
@@ -169,8 +161,7 @@ def from_ccxt(req: DataRequest) -> list[Bar]:
             if len(page) < 2 and since < end:
                 # Some endpoints return one candle per request; can still advance.
                 continue
-        else:
-            raise CoverageError("CCXT maximum 2000 pages reached; shorten date range")
+
         if req.include_funding:
             out = _apply_funding(out, _ccxt_funding(exchange,req), req.timeframe)
         return _requested(req, out)
