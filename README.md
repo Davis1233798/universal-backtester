@@ -373,3 +373,33 @@ CI 通過不等於 Render 部署完成，因此這是獨立工作流程，不會
 - **未支援**完整 Pine `request.security` 跨市場語法、跨市場真實轉帳、
   各家獨立保證金／鏈上 Gas、訂單簿撮合、幣別匯率正規化。
   所有報告必須視為簡化的研究結果，不能等同可實際套利損益。
+
+
+## 14. API 安全：預設拒絕匿名存取
+
+**重要安全修正（2026-10-25）：** 正式 API 改為全域 Bearer Token 保護，
+不再因為漏設 `UBT_PUBLIC_DEMO` 就自動開放真實資料與排程服務。
+
+- **正式模式**：所有 `/api/*`（只有 `/api/health` 例外）都要求
+  `Authorization: Bearer <UBT_API_TOKEN>`。
+  若 `UBT_API_TOKEN` 未設定或少於 32 字元，返回 **503（鎖定）**；
+  有設定但未提供或錯誤 Token 返回 **401**。
+- **公開示範模式**：必須明確設定 `UBT_PUBLIC_DEMO=1`。
+  允許匿名 `GET /api/health`、`GET /api/sources` 與
+  `POST /api/backtests`，後者**僅支援合成 K 線、有限 Pine 子集**
+  並有並行與請求大小資源預算。市場查詢、CSV、本機路徑、其他策略程式、
+  多市場批次、跨交易所 Portfolio、已存記錄、排程皆拒絕。
+- Swagger UI 的 `/docs`、`/redoc` 和 `/openapi.json` 在 Web 上關閉，
+  避免將未授權的管理介面作為公開入口。
+- 已將網頁的第三方 CDN JavaScript 移除，K 線圖可改用本機繪圖；
+  私有 API Token 只透過請求 Header 傳遞，不儲存在網址或 localStorage。
+- Docker Compose 仍只對本機 `127.0.0.1:8000` 開放，且現在要求先在
+  專案根目錄建立 **不提交到 Git 的 `.env`**，提供自己生成的
+  `UBT_API_TOKEN`。範例生成方式：
+  `python -c 'import secrets; print(secrets.token_urlsafe(48))'`。
+  私有伺服器須由 TLS 反向代理提供 HTTPS；Render 請透過 Secret Env Vars 配置。
+- 若未經隔離的私有 API 暴露到網際網路，即便有 Token 仍不等同完善安全：
+  未來應加入使用者身分、細粒度授權、rate limiting、工作佇列配額、
+  儲存空間配額及自訂策略的獨立沙盒。**不得在公開多租戶服務上開啟
+  `UBT_ALLOW_EXEC=1`**。
+
