@@ -66,6 +66,8 @@ export default function App(){
  const [selectedStrategy,setSelectedStrategy]=useState<string>('');
  const [strategyName,setStrategyName]=useState('EMA Cross Research');
  const [strategiesBusy,setStrategiesBusy]=useState(false);
+ const [aiPrompt,setAiPrompt]=useState('');
+ const [aiBusy,setAiBusy]=useState(false);
  const [strategyRevisions,setStrategyRevisions]=useState<Array<Record<string,unknown>>>([]);
  const [revisionFor,setRevisionFor]=useState('');
  const [batchText,setBatchText]=useState(marketLines),[batchWorkers,setBatchWorkers]=useState(3);
@@ -146,6 +148,21 @@ export default function App(){
   try{const updated=await client.post<SavedStrategy>(`/api/strategies/${id}/restore/${revision}`,{});
    await refreshLibrary();await showRevisions(id);setNotice(`已還原為第 ${revision} 版，並建立新版本 v${updated.revision}`);}
   catch(e){setError((e as Error).message)}
+ }
+ async function generateAI(){
+  if(!isPrivate){setError('AI 策略生成必須在私人部署使用');return}
+  if(aiPrompt.trim().length<12){setError('請輸入至少 12 個字元的策略描述');return}
+  setAiBusy(true);setError('');
+  try{
+    const output=await client.post<{code:string;model:string;notice:string}>('/api/strategies/generate',{description:aiPrompt});
+    setStrategyName('AI 策略草稿');
+    setSelectedStrategy('');
+    updateStrategy({type:'pine',code:output.code});
+    setView('terminal');
+    setExpandEditor(true);
+    setNotice('AI 已生成 Pine 草稿，通過相容子集解析，但尚未執行或儲存。請先審閱程式。');
+  }catch(e){setError((e as Error).message)}
+  finally{setAiBusy(false)}
  }
  async function removeStrategy(id:string){if(!confirm('確定刪除這個策略及版本紀錄？'))return;
   try{await client.delete('/api/strategies/'+id);if(selectedStrategy===id)setSelectedStrategy('');await refreshLibrary();setNotice('已刪除策略');}
@@ -240,7 +257,11 @@ export default function App(){
        <PageTitle kicker="STRATEGY LIBRARY / 02" title="策略工廠" sub="集中管理 Pine Script、內建策略、參數與歷史版本。" actions={<><button className="outline-button" onClick={()=>{setSelectedStrategy('');setStrategyName('新策略');updateStrategy({type:'pine',code:samplePine});setView('terminal')}}><Plus size={16}/> 新建策略</button></>}/>
        {!isPrivate?<Message>示範版支援直接在「交易研究台」編輯 Pine；持久化策略庫、版本與排程需要私人 API。</Message>:<div className="library-layout"><section className="panel"><div className="panel-head"><div><div className="eyebrow">SAVED STRATEGIES</div><h2>已儲存策略 <Badge tone="muted">{strategies.length}</Badge></h2></div><button className="icon-button" title="重新整理" onClick={()=>refreshLibrary()}><RefreshCw size={16}/></button></div>
         {strategies.length?<div className="strategy-list">{strategies.map(s=><div className="strategy-row" key={s.id}><div className="strategy-logo"><FileCode2 size={19}/></div><div className="strategy-detail"><strong>{s.name}</strong><span>{s.kind==='pine'?'Pine Script':s.strategy_name||'內建策略'} · v{s.revision||1} · {s.updated_at?.slice(0,16)}</span></div><Badge tone={s.kind==='pine'?'blue':'muted'}>{s.kind.toUpperCase()}</Badge><div className="row-actions"><button title="查看版本紀錄" className="icon-button" onClick={()=>showRevisions(s.id)}><History size={16}/></button><button title="載入" className="icon-button" onClick={()=>loadSaved(s)}><ArrowRight size={16}/></button><button title="刪除" className="icon-button danger" onClick={()=>removeStrategy(s.id)}><Trash2 size={16}/></button></div></div>)}</div>:empty('尚未儲存策略','回到工作台編輯 Pine，點選「儲存策略」建立第一個版本。',<FileCode2 size={24}/>)}
-       </section><section className="panel info-panel">{revisionFor&&<div className="revision-block"><div className="panel-head"><h2>策略版本紀錄</h2><button className="icon-button" onClick={()=>setRevisionFor('')}><X size={16}/></button></div>{strategyRevisions.length?strategyRevisions.map(item=><div className="revision-row" key={String(item.revision)}><div><strong>v{String(item.revision)}</strong><small>{String(item.created_at||'')}</small></div><button className="outline-button slim" onClick={()=>restoreStrategy(revisionFor,Number(item.revision))}>還原</button></div>):<div className="small-empty">尚無版本紀錄</div>}</div>}<div className="eyebrow">STRATEGY WORKFLOW</div><h2>從程式碼到可重現研究</h2><div className="steps">{[['01','編寫與檢查','Pine 相容子集解析並拒絕不支援語法'],['02','儲存與版本','修改策略產生版本快照，便於回溯'],['03','完整歷史回測','依交易所原始資料計算，而非圖表縮減數據'],['04','驗證結果','確認費率、成交假設及樣本外風險']].map(([n,t,sub])=><div className="step" key={n}><span>{n}</span><div><strong>{t}</strong><p>{sub}</p></div></div>)}</div><button className="primary-button wide" onClick={()=>setView('terminal')}><Code2 size={16}/> 前往策略編輯器</button></section></div>}
+       </section><section className="panel info-panel">{revisionFor&&<div className="revision-block"><div className="panel-head"><h2>策略版本紀錄</h2><button className="icon-button" onClick={()=>setRevisionFor('')}><X size={16}/></button></div>{strategyRevisions.length?strategyRevisions.map(item=><div className="revision-row" key={String(item.revision)}><div><strong>v{String(item.revision)}</strong><small>{String(item.created_at||'')}</small></div><button className="outline-button slim" onClick={()=>restoreStrategy(revisionFor,Number(item.revision))}>還原</button></div>):<div className="small-empty">尚無版本紀錄</div>}</div>}<div className="eyebrow">STRATEGY WORKFLOW</div><h2>從程式碼到可重現研究</h2><div className="steps">{[['01','編寫與檢查','Pine 相容子集解析並拒絕不支援語法'],['02','儲存與版本','修改策略產生版本快照，便於回溯'],['03','完整歷史回測','依交易所原始資料計算，而非圖表縮減數據'],['04','驗證結果','確認費率、成交假設及樣本外風險']].map(([n,t,sub])=><div className="step" key={n}><span>{n}</span><div><strong>{t}</strong><p>{sub}</p></div></div>)}</div><button className="primary-button wide" onClick={()=>setView('terminal')}><Code2 size={16}/> 前往策略編輯器</button>
+        <div className="ai-section"><div className="eyebrow">AI STRATEGY ASSISTANT</div><h2>自然語言產生策略草稿</h2><p>描述進出場條件，由私人伺服器呼叫選用的 AI 模型並檢查 Pine 相容性；不會直接執行或部署。</p>
+        <label className="field"><span>策略描述</span><textarea rows={4} value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="例如：使用 EMA 9/21 交叉進場，反向交叉平倉；避免未來函數"/></label>
+        <button className="outline-button wide" disabled={aiBusy||!isPrivate} onClick={generateAI}>{aiBusy?<Loading/>:<Zap size={16}/>} 產生並檢查 Pine 草稿</button>
+        <small>需在後端設定 UBT_AI_API_KEY；生成內容不保證獲利，必須先回測。</small></div></section></div>}
       </>}
       {view==='batch'&&<>
        <PageTitle kicker="MULTI-VENUE RESEARCH / 03" title="多市場回測中心" sub="同一策略並行評估不同交易所；或以共同資金研究跨市場價差策略。" actions={<button className="outline-button" onClick={()=>setView('terminal')}><ArrowRight size={16}/> 返回策略編輯器</button>}/>
