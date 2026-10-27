@@ -45,3 +45,6 @@
 .market-sync-warning{color:#f1ba8c}
 .sync-pager{display:flex;gap:7px;flex-wrap:wrap;margin-left:auto}
 @media(max-width:680px){.sync-pager{width:100%;margin-left:0}.sync-pager>*{flex:1}}
+
+.market-sync .follow-live{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;color:#8de9c9;font-size:11px;cursor:pointer}
+.market-sync .follow-live input{width:15px;height:15px;accent-color:#39c89d;margin:0}
