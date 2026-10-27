@@ -1,3 +1,8 @@
+interface MarketQuote {
+ provider:string;exchange:string;symbol:string;
+ price_type:string;price:number;
+ market_ts:number|null;received_at_ms:number;cached:boolean;
+}
 interface MarketChartResponse {
  candles:Candle[];
  represented_bars:number;
@@ -78,6 +83,8 @@ export default function App(){
  const [chartInfo,setChartInfo]=useState<MarketChartResponse|null>(null);
  const [chartPageEnd,setChartPageEnd]=useState<number|null>(null);
  const [followLive,setFollowLive]=useState(true);
+ const [marketQuote,setMarketQuote]=useState<MarketQuote|null>(null);
+ const [marketQuoteError,setMarketQuoteError]=useState('');
  const [chartBusy,setChartBusy]=useState(false),[chartError,setChartError]=useState('');
  const chartRequest=useRef(0);
  const [marketQuery,setMarketQuery]=useState(''),[marketMatches,setMarketMatches]=useState<Array<{symbol:string;name?:string;base?:string;exchange?:string}>>([]);
@@ -182,6 +189,31 @@ export default function App(){
   document.addEventListener('visibilitychange',poll);
   return ()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',poll)};
  },[isPrivate,chartPageEnd,config,chartBusy,followLive]);
+ // Separate near-live exchange quote from the OHLCV candle close.
+ // A LAST trade (or Hyperliquid midpoint) may differ from a mark/index price.
+ useEffect(()=>{
+  setMarketQuote(null);setMarketQuoteError('');
+  if(!isPrivate||!followLive||chartPageEnd!==null||
+     !['ccxt','hyperliquid'].includes(config.data.provider))return;
+  let current=true;
+  const poll=async()=>{
+    if(document.visibilityState!=='visible')return;
+    const url=new URLSearchParams({provider:config.data.provider,
+      exchange:config.data.exchange,symbol:config.data.symbol,
+      market_type:config.data.market_type});
+    try{
+      const quote=await client.get<MarketQuote>('/api/market/quote?'+url.toString());
+      if(current){setMarketQuote(quote);setMarketQuoteError('');}
+    }catch(e){if(current)setMarketQuoteError((e as Error).message)}
+  };
+  void poll();
+  const timer=window.setInterval(()=>void poll(),10000);
+  const onVisible=()=>{if(document.visibilityState==='visible')void poll()};
+  document.addEventListener('visibilitychange',onVisible);
+  return ()=>{current=false;window.clearInterval(timer);
+    document.removeEventListener('visibilitychange',onVisible)};
+ },[isPrivate,followLive,chartPageEnd,config.data.provider,
+    config.data.exchange,config.data.symbol,config.data.market_type]);
  async function runBacktest(){setBusy(true);setError('');setNotice('');
   try{
    const cfg=structuredClone(config);
@@ -348,6 +380,15 @@ export default function App(){
                 <strong>{m.symbol}</strong><span>{m.name||m.base||m.exchange||'可交易商品'}</span>
               </button>)}
              </div>}
+          </div>}
+          {isPrivate&&followLive&&<div className="market-quote">
+            <strong>交易所參考價格</strong>
+            {marketQuote?<><span className="quote-value">{fmt(marketQuote.price,6)}</span>
+              <span>{marketQuote.exchange} · {marketQuote.price_type}</span>
+              <span>接收時間：{new Date(marketQuote.received_at_ms).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false})}（台北）</span>
+              <small>每 10 秒檢查報價；OHLCV 收盤價、最新成交價、標記價格可能不同。</small></>:
+              <span>{marketQuoteError?'最新報價暫時無法取得':'正在讀取交易所參考報價…'}</span>}
+            {marketQuoteError&&<span className="market-sync-warning">{marketQuoteError}</span>}
           </div>}
           {isPrivate&&<div className="market-sync">
             <span className={'sync-light '+(chartInfo?.is_live&&!chartError?'on':'')}></span>
