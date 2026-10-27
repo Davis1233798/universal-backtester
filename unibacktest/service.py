@@ -89,7 +89,7 @@ def execute(config: dict, store: Store | None = None, save: bool = True,
     if risk.product_type == "perp" and result["funding_data_points"] == 0:
         warnings.append("NO HISTORICAL FUNDING: rate assumed zero! Import funding_rate via CSV for credible perpetual P&L.")
     if risk.product_type == "equity":
-        warnings.append("For yfinance, historical prices are adjusted research data; dividends, splits and delisted securities are not independently simulated.")
+        warnings.append("Yahoo OHLC uses raw unadjusted market prices for chart comparison; dividends, stock splits, and delisted securities are NOT independently simulated in this backtest.")
     result["coverage"] = coverage
     result["warnings"] = warnings
     if save:
