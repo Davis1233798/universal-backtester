@@ -184,6 +184,20 @@ def sources():
             "limitations": "Provider coverage varies; Pine safe subset is not fully TradingView compatible."}
 
 
+@app.get("/api/market/quote")
+def market_quote(provider: str, symbol: str, exchange: str = "",
+                 market_type: str = "swap"):
+    """Authenticated last-trade/mid quote; independent of OHLCV candle close."""
+    private_only()
+    from .ticker import current_quote
+    try:
+        return current_quote(provider, exchange, symbol, market_type)
+    except (ValueError, RuntimeError, ImportError) as exc:
+        raise HTTPException(422,detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502,detail="Market quote provider is unavailable") from exc
+
+
 @app.get("/api/markets")
 def markets(provider: str, q: str, exchange: str = "",
             market_type: str = "swap", limit: int = 30):
