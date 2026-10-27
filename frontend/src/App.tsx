@@ -77,6 +77,7 @@ export default function App(){
  const [candles,setCandles]=useState<Candle[]>([]);
  const [chartInfo,setChartInfo]=useState<MarketChartResponse|null>(null);
  const [chartPageEnd,setChartPageEnd]=useState<number|null>(null);
+ const [followLive,setFollowLive]=useState(true);
  const [chartBusy,setChartBusy]=useState(false),[chartError,setChartError]=useState('');
  const chartRequest=useRef(0);
  const [marketQuery,setMarketQuery]=useState(''),[marketMatches,setMarketMatches]=useState<Array<{symbol:string;name?:string;base?:string;exchange?:string}>>([]);
@@ -139,9 +140,14 @@ export default function App(){
   const request=++chartRequest.current;
   if(!quiet){setChartBusy(true);setChartError('');}
   try{
+   // Always extend the live chart to tomorrow's UTC midnight.
+   // Historical backtest start/end remain unchanged; user-selected past
+   // chart dates explicitly turn this off.
+   const liveView=followLive&&viewEnd===null&&['ccxt','hyperliquid'].includes(cfg.data.provider);
+   const endUtc=new Date(Date.now()+86400000).toISOString().slice(0,10);
+   const chartData=liveView?{...cfg.data,end:endUtc}:cfg.data;
    const response=await client.post<MarketChartResponse>('/api/candles/load',{
-    data:cfg.data,refresh,max_points:1500,
-    view_end_ms:viewEnd
+    data:chartData,refresh,max_points:1500,view_end_ms:viewEnd
    });
    if(request!==chartRequest.current)return;
    if(!response.candles?.length)throw new Error('此商品沒有可用的原始 K 線');
@@ -161,13 +167,12 @@ export default function App(){
   return ()=>{clearTimeout(t);chartRequest.current+=1};
  },[isPrivate,config.data.provider,config.data.exchange,config.data.symbol,
     config.data.market_type,config.data.timeframe,config.data.start,config.data.end,
-    config.data.include_funding,chartPageEnd]);
+    config.data.include_funding,chartPageEnd,followLive]);
  // Follow the exchange's evolving OHLCV candle; no full-history refetch.
  useEffect(()=>{
   if(!isPrivate||chartPageEnd!==null||
       !['ccxt','hyperliquid'].includes(config.data.provider))return;
-  const futureEnd=new Date(config.data.end).getTime();
-  if(!Number.isFinite(futureEnd)||futureEnd<Date.now())return;
+  if(!followLive)return;
   const poll=()=>{
     if(document.visibilityState==='visible'&&!chartBusy){
       void loadChart(config,false,true,null);
@@ -176,7 +181,7 @@ export default function App(){
   const timer=window.setInterval(poll,30000);
   document.addEventListener('visibilitychange',poll);
   return ()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',poll)};
- },[isPrivate,chartPageEnd,config,chartBusy]);
+ },[isPrivate,chartPageEnd,config,chartBusy,followLive]);
  async function runBacktest(){setBusy(true);setError('');setNotice('');
   try{
    const cfg=structuredClone(config);
@@ -346,6 +351,9 @@ export default function App(){
           </div>}
           {isPrivate&&<div className="market-sync">
             <span className={'sync-light '+(chartInfo?.is_live&&!chartError?'on':'')}></span>
+            <label className="follow-live"><input type="checkbox" checked={followLive}
+              onChange={e=>{setFollowLive(e.target.checked);setChartPageEnd(null)}}/>
+              跟隨即時 K 線</label>
             <span>{chartInfo?.is_live?'市場 K 線同步中（每 30 秒重新查詢）':
               chartPageEnd!==null?'歷史時間範圍 · 暫停即時同步':
               '尚未取得即時行情'}</span>
@@ -385,7 +393,7 @@ export default function App(){
             <label className="field"><span>交易商品</span><input value={config.data.symbol} onChange={e=>updateData({symbol:e.target.value})}/></label>
             {config.data.provider==='csv'&&<label className="field"><span>後端 CSV 路徑（私人主機）</span><input value={config.data.csv_path||''} onChange={e=>updateData({csv_path:e.target.value})}/></label>}
             {isPrivate&&['ccxt','hyperliquid','yfinance'].includes(config.data.provider)&&<div className="market-lookup"><label className="field"><span>市場搜尋</span><div className="input-row"><input value={marketQuery} onChange={e=>setMarketQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&lookupMarkets()}/><button type="button" className="outline-button" disabled={marketBusy} onClick={lookupMarkets}>{marketBusy?<Loading/>:<Search size={16}/>}</button></div></label>{marketMatches.length>0&&<select size={Math.min(5,marketMatches.length)} className="market-results" aria-label="搜尋到的商品" onChange={e=>updateData({symbol:e.target.value})}>{marketMatches.map(x=><option key={x.symbol} value={x.symbol}>{x.symbol} {x.name||x.base||''}</option>)}</select>}</div>}
-            <div className="field-row"><label className="field"><span>開始日期 (UTC)</span><input type="date" value={config.data.start.slice(0,10)} onChange={e=>updateData({start:e.target.value})}/></label><label className="field"><span>結束日期 (UTC)</span><input type="date" value={config.data.end.slice(0,10)} onChange={e=>updateData({end:e.target.value})}/></label></div>
+            <div className="field-row"><label className="field"><span>開始日期 (UTC)</span><input type="date" value={config.data.start.slice(0,10)} onChange={e=>updateData({start:e.target.value})}/></label><label className="field"><span>結束日期 (UTC)</span><input type="date" value={config.data.end.slice(0,10)} onChange={e=>{setFollowLive(false);updateData({end:e.target.value})}}/></label></div>
             <div className="field-row"><SelectField label="K 線週期" value={config.data.timeframe} onChange={v=>updateData({timeframe:v})}>{['1m','3m','5m','15m','30m','1h','2h','4h','8h','12h','1d','3d','1w'].map(x=><option key={x}>{x}</option>)}</SelectField><SelectField label="市場類型" value={config.data.market_type} onChange={v=>updateData({market_type:v})}><option value="spot">現貨</option><option value="swap">永續合約</option><option value="future">期貨</option></SelectField></div>
             <SelectField label="策略選擇" value={config.strategy.type==='pine'?'pine':config.strategy.name||'sma_cross'} onChange={v=>setConfig(c=>({...c,strategy:v==='pine'?{type:'pine',code:c.strategy.code||samplePine}:{type:'builtin',name:v,options:{fast:10,slow:30}}}))}><option value="pine">自訂 Pine Script</option><option value="sma_cross">SMA 均線交叉</option><option value="rsi_revert">RSI 回歸</option><option value="breakout">突破策略</option><option value="buy_hold">Buy & Hold</option></SelectField>
             <div className="field-row"><NumField label="起始資金 (USDT)" value={config.risk.initial_cash} onChange={v=>updateRisk({initial_cash:Number(v)})} min={1}/><NumField label="槓桿倍數" value={config.risk.leverage} onChange={v=>updateRisk({leverage:Number(v)})} min={1}/></div>
