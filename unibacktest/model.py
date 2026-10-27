@@ -115,5 +115,12 @@ class DataRequest:
 
     def cache_key(self) -> str:
         # Include source details to prevent BTC spot/perp or exchange mixups.
-        return "|".join([self.provider, self.exchange, self.symbol, self.timeframe,
-                         self.market_type, self.csv_path, "funding" if self.include_funding else "no_funding"])
+        parts=[self.provider, self.exchange, self.symbol, self.timeframe,
+               self.market_type, self.csv_path,
+               "funding" if self.include_funding else "no_funding"]
+        # The Yahoo adapter previously stored dividend/split-adjusted OHLC,
+        # which looks different from the actual exchange execution candles.
+        # Segregate raw unadjusted prices from legacy adjusted cache entries.
+        if self.provider == "yfinance":
+            parts.append("raw_ohlc_v1")
+        return "|".join(parts)
