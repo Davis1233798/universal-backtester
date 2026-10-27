@@ -312,17 +312,22 @@ class CandleLoadPayload(BaseModel):
     data: dict = Field(default_factory=dict)
     refresh: bool = False
     max_points: int = 1500
+    # Chart can page through the FULL cached dataset in exact native bars.
+    # A display window is never passed into the strategy backtest engine.
+    view_end_ms: int | None = None
 
 
 @app.post("/api/candles/load")
 def load_market_candles(payload: CandleLoadPayload):
-    """Authenticated real-market chart loading. Populate historical cache on demand.
+    """Authenticated real OHLCV: backfill missing history + refresh live tail.
 
-    Chart aggregation never changes the historical bars supplied to backtests.
-    Unlike the read-only /api/candles endpoint, this fetches missing market data.
+    Live, still-forming bars are displayed but NEVER persisted for backtests.
+    Viewport is exact resolution; it is never mislabeled aggregated 15m/1m data.
     """
     private_only()
+    from dataclasses import replace
     from .chart import read_candles
+    from .live import sync_recent_candles, attach_latest_to_chart
     from .service import load_bars
     from .model import INTERVALS, iso_ms
     import time
@@ -330,58 +335,83 @@ def load_market_candles(payload: CandleLoadPayload):
         req = DataRequest(**payload.data)
         req.validate()
         if req.provider == "demo":
-            raise ValueError("Production market charts require a real data source, not demo")
+            raise ValueError("Production chart requires real market data, not demo")
         if req.provider not in ("ccxt", "hyperliquid", "yfinance", "csv"):
-            raise ValueError("Unsupported market chart source")
+            raise ValueError("Unsupported chart provider")
         if not 10 <= payload.max_points <= 5000:
-            raise ValueError("max_points must be between 10 and 5000 (display only)")
-        store = Store()
-        summary = store.data_summary(req)
+            raise ValueError("max_points must be 10..5000 for display only")
+        start_ms,end_ms = iso_ms(req.start),iso_ms(req.end)
         now = int(time.time()*1000)
-        target = min(iso_ms(req.end), now)
-        # Fill uncached history and refresh the trailing bars on a stale range.
-        # A newly expanded left-hand chart range must fetch older candles.
-        # A cache hit for the recent tail is not evidence of full history.
-        # Stock calendars allow a wider tolerance around non-trading days.
-        tolerance = max(2*INTERVALS[req.timeframe],
-                        4*86400000 if req.provider == "yfinance" else 0)
-        needs_backfill = (summary["count"] >= 2 and
-                          summary["first_ts"] is not None and
-                          summary["first_ts"] > iso_ms(req.start) + tolerance)
-        needs_fetch = (payload.refresh or needs_backfill or summary["count"] < 2 or
-                       (summary["last_ts"] is not None and
-                        summary["last_ts"] + 3*INTERVALS[req.timeframe] < target
-                        and req.provider != "csv"))
-        coverage = summary
+        step = INTERVALS[req.timeframe]
+        window_end = min(end_ms, now + step)
+        if payload.view_end_ms is not None:
+            if not start_ms < payload.view_end_ms <= end_ms:
+                raise ValueError("view_end_ms is outside requested history")
+            window_end = min(payload.view_end_ms, end_ms)
+        window_start = max(start_ms, window_end - payload.max_points*step)
+        viewport = replace(req, start=datetime.fromtimestamp(window_start/1000,timezone.utc).isoformat(),
+                           end=datetime.fromtimestamp(window_end/1000,timezone.utc).isoformat())
+        store = Store()
+        summary = store.data_summary(viewport)
+        # Real-time updates use an independent small tail request. First-time
+        # history is fetched once; every subsequent poll avoids a full download.
+        tolerance = 4*86400000 if req.provider == "yfinance" else 2*step
+        has_gap_at_start = (summary["count"] >= 2 and
+                            summary["first_ts"] is not None and
+                            summary["first_ts"] > window_start + tolerance)
+        has_gap_at_end = (summary["count"] >= 2 and
+                          summary["last_ts"] is not None and
+                          summary["last_ts"] + 3*step < min(window_end,now)
+                          and req.provider != "csv")
+        needs_history = (summary["count"] < 2 or has_gap_at_start or has_gap_at_end)
         warnings = []
-        if needs_fetch:
+        if needs_history or (payload.refresh and req.provider in ("csv","yfinance")):
             try:
-                _, coverage, warnings = load_bars(
-                    req, store, refresh=(payload.refresh or needs_backfill),
-                    incremental=bool(summary["count"] and
-                                     not payload.refresh and not needs_backfill))
+                # Only backfill the visible range. Full history for backtests
+                # remains independently available through /api/backtests.
+                _, _, coverage_warnings = load_bars(
+                    viewport, store, refresh=True, incremental=False)
+                warnings.extend(coverage_warnings)
             except (ValueError, RuntimeError, TimeoutError, ImportError, OSError) as exc:
-                # A previously stored partial range is usable for display only,
-                # but return the provider failure prominently to the client.
-                if summary["count"] < 2 or payload.refresh:
+                if summary["count"] < 2:
                     raise
-                warnings.append("Live refresh failed; showing cached historical data: " + str(exc))
-        chart = read_candles(req, store, payload.max_points)
-        if not chart["candles"]:
-            raise ValueError("No market candles available for the selected symbol/date range")
-        return {**chart, "coverage": coverage, "warnings": warnings,
-                "provider": req.provider, "exchange": req.exchange,
-                "symbol": req.symbol, "timeframe": req.timeframe,
-                "cached": not needs_fetch}
+                warnings.append("History refresh failed; chart shows cached bars: " + str(exc))
+        # Only the current (not paged) chart follows live ticks.
+        following_live = (payload.view_end_ms is None and
+                          start_ms <= now < end_ms and
+                          req.provider in ("ccxt","hyperliquid"))
+        snapshot = None
+        if following_live:
+            try:
+                snapshot = sync_recent_candles(req, store, now_ms=now)
+            except Exception as exc:
+                warnings.append("Live update failed; prices are NOT current: " + str(exc)[:180])
+        chart = read_candles(viewport, store, payload.max_points)
+        if not chart["candles"] and not (snapshot and snapshot.get("partial")):
+            raise ValueError("No market OHLCV returned for selected symbol/range")
+        if snapshot:
+            chart = attach_latest_to_chart(chart, snapshot)
+        else:
+            chart.update(live_supported=False, fetched_at_ms=None,
+                         last_price_ts=None, partial_candle=False,
+                         live_warning=("Historical range: live updates paused" if payload.view_end_ms is not None
+                                       else "Stock/CSV source does not promise live prices"))
+        # Metadata is explicit so users can compare the same exchange + timeframe.
+        chart.update(provider=req.provider, exchange=req.exchange, symbol=req.symbol,
+                     timeframe=req.timeframe, native_interval_ms=step,
+                     view_start_ms=window_start, view_end_ms=window_end,
+                     server_time_ms=now, time_zone="UTC",
+                     warnings=warnings, is_live=following_live and bool(snapshot and snapshot.get("last_price_ts")),
+                     exact_timeframe=chart["bucket_ms"] == step)
+        if not chart["exact_timeframe"]:
+            warnings.append("Chart candles are aggregated; expand/shorten the visible interval to compare native candles")
+        return chart
     except (ValueError, RuntimeError, TimeoutError, ImportError, OSError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
     except Exception as exc:
-        # Exchange adapters may raise provider-specific HTTP or CCXT errors.
-        # Surface a bounded error to the authenticated user, not a blank chart.
+        # Errors are reported clearly, not silently substituted with demo prices.
         venue = str(payload.data.get("exchange") or payload.data.get("provider") or "market")
-        raise HTTPException(
-            502, detail=f"{venue} 行情供應商請求失敗（{type(exc).__name__}）：{str(exc)[:250]}"
-        ) from exc
+        raise HTTPException(502, detail=f"{venue} market request failed ({type(exc).__name__}): {str(exc)[:200]}") from exc
 
 
 @app.get("/api/candles")
