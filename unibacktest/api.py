@@ -401,7 +401,11 @@ def load_market_candles(payload: CandleLoadPayload):
                      timeframe=req.timeframe, native_interval_ms=step,
                      view_start_ms=window_start, view_end_ms=window_end,
                      server_time_ms=now, time_zone="UTC",
-                     warnings=warnings, is_live=following_live and bool(snapshot and snapshot.get("last_price_ts")),
+                     warnings=warnings,
+                     is_live=bool(following_live and snapshot and
+                                  snapshot.get("last_price_ts") is not None and
+                                  not snapshot.get("live_warning")),
+                     price_type="trade OHLCV (not mark or index price)",
                      exact_timeframe=chart["bucket_ms"] == step)
         if not chart["exact_timeframe"]:
             warnings.append("Chart candles are aggregated; expand/shorten the visible interval to compare native candles")
