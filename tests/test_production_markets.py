@@ -51,7 +51,9 @@ def test_real_market_chart_populates_cache_and_accepts_eth_sol(monkeypatch,tmp_p
     assert requests==["ETH/USDT:USDT","SOL/USDT:USDT"]
     refreshed=client.post("/api/candles/load",json={**_request(),"refresh":True})
     assert refreshed.status_code==200,refreshed.text
-    assert requests[-1]=="ETH/USDT:USDT"
+    # Historical refresh no longer re-downloads complete fixed-date data.
+    # Only current-market view triggers bounded live-tail synchronization.
+    assert requests==["ETH/USDT:USDT","SOL/USDT:USDT"]
 
 
 def test_chart_loader_rejects_public_and_unauthorized(monkeypatch,tmp_path):
@@ -105,4 +107,4 @@ def test_extending_range_backwards_fetches_older_market_history(monkeypatch,tmp_
     second=client.post("/api/candles/load",json=two)
     assert second.status_code==200,second.text
     assert second.json()["represented_bars"]==48
-    assert called==["2024-01-02","2024-01-01"]
+    assert [v[:10] for v in called]==["2024-01-02","2024-01-01"]
