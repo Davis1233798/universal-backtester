@@ -205,9 +205,11 @@ def from_yfinance(req: DataRequest) -> list[Bar]:
     except ImportError as err:
         raise RuntimeError("Install: pip install -e '.[stocks]'") from err
     interval = "60m" if req.timeframe == "1h" else req.timeframe
-    # auto_adjust=True is a research total-return proxy, not exchange execution prices.
+    # Raw OHLC is required when comparing the chart with the actual venue.
+    # Adjusted OHLC differs around dividends/splits and must NOT be silently
+    # represented as the market's execution price.
     frame = yf.Ticker(req.symbol).history(start=req.start[:10], end=req.end[:10],
-                                            interval=interval, auto_adjust=True, actions=False)
+                                            interval=interval, auto_adjust=False, actions=False)
     if frame.empty:
         return []
     out = []
