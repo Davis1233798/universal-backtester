@@ -1,3 +1,19 @@
+interface MarketChartResponse {
+ candles:Candle[];
+ represented_bars:number;
+ warnings:string[];
+ provider:string;exchange:string;symbol:string;timeframe:string;
+ server_time_ms:number;
+ fetched_at_ms:number|null;
+ last_price_ts:number|null;
+ last_completed_ts:number|null;
+ is_live:boolean;partial_candle:boolean;
+ live_warning:string|null;
+ exact_timeframe:boolean;
+ native_interval_ms:number;
+ view_start_ms:number;
+ view_end_ms:number;
+}
 import {useCallback,useEffect,useMemo,useRef,useState,type ChangeEvent,type FormEvent,type ReactNode} from 'react';
 import {
  Activity,ArrowDownRight,ArrowLeftRight,ArrowRight,ArrowUpRight,BarChart3,BarChartBig,BookOpen,
@@ -59,6 +75,8 @@ export default function App(){
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const [result,setResult]=useState<BacktestResult|null>(null);
  const [candles,setCandles]=useState<Candle[]>([]);
+ const [chartInfo,setChartInfo]=useState<MarketChartResponse|null>(null);
+ const [chartPageEnd,setChartPageEnd]=useState<number|null>(null);
  const [chartBusy,setChartBusy]=useState(false),[chartError,setChartError]=useState('');
  const chartRequest=useRef(0);
  const [marketQuery,setMarketQuery]=useState(''),[marketMatches,setMarketMatches]=useState<Array<{symbol:string;name?:string;base?:string;exchange?:string}>>([]);
@@ -84,7 +102,10 @@ export default function App(){
  const isDemo=health?.public_demo===true;
  const isAuthed=!!sources;
  const isPrivate=isAuthed && !isDemo;
- const updateData=(patch:Partial<BacktestConfig['data']>)=>setConfig(c=>({...c,data:{...c.data,...patch}}));
+ const updateData=(patch:Partial<BacktestConfig['data']>)=>{
+  setChartPageEnd(null);setChartInfo(null);
+  setConfig(c=>({...c,data:{...c.data,...patch}}));
+};
  const updateRisk=(patch:Partial<BacktestConfig['risk']>)=>setConfig(c=>({...c,risk:{...c.risk,...patch}}));
  const updateStrategy=(patch:Partial<BacktestConfig['strategy']>)=>setConfig(c=>({...c,strategy:{...c.strategy,...patch}}));
 
@@ -113,17 +134,21 @@ export default function App(){
   catch(e){setAuthError((e as Error).message);client.clearBearer();}
  }
  function logout(){chartRequest.current+=1;client.clearBearer();setSources(null);setResult(null);setCandles([]);setStrategies([]);setRuns([]);setNotice('已清除本頁授權');}
- async function loadChart(cfg=config, refresh=false){
+ async function loadChart(cfg=config, refresh=false, quiet=false, viewEnd=chartPageEnd){
   if(!isPrivate || cfg.data.provider==='demo')return;
   const request=++chartRequest.current;
-  setChartBusy(true);setChartError('');setCandles([]);
+  if(!quiet){setChartBusy(true);setChartError('');}
   try{
-   const response=await client.post<{candles:Candle[];represented_bars:number;warnings?:string[];cached?:boolean}>(
-    '/api/candles/load',{data:cfg.data,refresh,max_points:1500});
+   const response=await client.post<MarketChartResponse>('/api/candles/load',{
+    data:cfg.data,refresh,max_points:1500,
+    view_end_ms:viewEnd
+   });
    if(request!==chartRequest.current)return;
-   if(!response.candles?.length)throw new Error('此商品在指定日期沒有可取得的原始 K 線');
+   if(!response.candles?.length)throw new Error('此商品沒有可用的原始 K 線');
    setCandles(response.candles);
-   if(response.warnings?.length)setNotice('行情注意事項：'+response.warnings.join('；'));
+   setChartInfo(response);
+   setChartError('');
+   if(response.warnings?.length)setNotice('行情來源提醒：'+response.warnings.join('；'));
   }catch(e){
    if(request===chartRequest.current)setChartError((e as Error).message);
   }finally{
@@ -131,19 +156,34 @@ export default function App(){
   }
  }
  useEffect(()=>{
-  if(!isPrivate || config.data.provider==='demo')return;
-  const t=setTimeout(()=>{void loadChart(config)},650);
+  if(!isPrivate||config.data.provider==='demo')return;
+  const t=setTimeout(()=>{void loadChart(config,false,false,chartPageEnd)},450);
   return ()=>{clearTimeout(t);chartRequest.current+=1};
  },[isPrivate,config.data.provider,config.data.exchange,config.data.symbol,
     config.data.market_type,config.data.timeframe,config.data.start,config.data.end,
-    config.data.include_funding]);
+    config.data.include_funding,chartPageEnd]);
+ // Follow the exchange's evolving OHLCV candle; no full-history refetch.
+ useEffect(()=>{
+  if(!isPrivate||chartPageEnd!==null||
+      !['ccxt','hyperliquid'].includes(config.data.provider))return;
+  const futureEnd=new Date(config.data.end).getTime();
+  if(!Number.isFinite(futureEnd)||futureEnd<Date.now())return;
+  const poll=()=>{
+    if(document.visibilityState==='visible'&&!chartBusy){
+      void loadChart(config,false,true,null);
+    }
+  };
+  const timer=window.setInterval(poll,30000);
+  document.addEventListener('visibilitychange',poll);
+  return ()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',poll)};
+ },[isPrivate,chartPageEnd,config,chartBusy]);
  async function runBacktest(){setBusy(true);setError('');setNotice('');
   try{
    const cfg=structuredClone(config);
    if(isDemo){cfg.data.provider='demo';cfg.data.exchange='';cfg.data.symbol='SYNTHETIC';cfg.data.include_funding=false;cfg.streaming=false;cfg.refresh=false;}
    if(cfg.strategy.type==='pine' && !cfg.strategy.code?.trim())throw new Error('請先輸入 Pine Script 策略');
    const output=await client.post<BacktestResult>('/api/backtests',cfg);
-   setResult(output);setCandles(output.candles_preview||[]);setView('terminal');
+   setResult(output);if(isDemo)setCandles(output.candles_preview||[]);setView('terminal');
    setNotice(`回測完成 · ${output.bars.toLocaleString()} 根原始 K 線${isDemo?' · 合成示範行情':''}`);
    if(!isDemo){void loadChart(cfg);void refreshLibrary()}
   }catch(e){setError((e as Error).message)}finally{setBusy(false)}
@@ -248,7 +288,7 @@ export default function App(){
           actions={<><button className="outline-button" onClick={()=>setView('strategies')}><BookOpen size={16}/> 策略工廠</button><button className="primary-button" onClick={runBacktest} disabled={busy}>{busy?<Loading/>:<Play size={16}/>} 執行回測</button></>}/>
         <div className="workspace-grid"><div className="workspace-main">
           <div className="market-strip"><div className="market-asset"><div className="asset-icon">₿</div><div><strong>{config.data.symbol||'BTC/USDT'}</strong><small>{config.data.provider.toUpperCase()} {config.data.exchange&&'· '+config.data.exchange}</small></div></div>
-          <div className="market-actions"><span className="muted">K 線週期</span>{['15m','1h','4h','1d'].map(t=><button key={t} className={'time-chip '+(t===config.data.timeframe?'active':'')} onClick={()=>updateData({timeframe:t})}>{t}</button>)}<span className="splitter"/><button className="quiet-button" onClick={()=>loadChart(config,true)} disabled={busy||chartBusy||isDemo}>
+          <div className="market-actions"><span className="muted">K 線週期</span>{['15m','1h','4h','1d'].map(t=><button key={t} className={'time-chip '+(t===config.data.timeframe?'active':'')} onClick={()=>updateData({timeframe:t})}>{t}</button>)}<span className="splitter"/><button className="quiet-button" onClick={()=>loadChart(config,true,false,chartPageEnd)} disabled={busy||chartBusy||isDemo}>
 {chartBusy?<Loading/>:<RefreshCw size={14}/>} 重新整理行情</button></div></div>
           {isPrivate&&<div className="market-switcher">
             <div className="market-switcher-top">
@@ -304,10 +344,28 @@ export default function App(){
               </button>)}
              </div>}
           </div>}
+          {isPrivate&&<div className="market-sync">
+            <span className={'sync-light '+(chartInfo?.is_live&&!chartError?'on':'')}></span>
+            <span>{chartInfo?.is_live?'市場 K 線同步中（每 30 秒重新查詢）':
+              chartPageEnd!==null?'歷史時間範圍 · 暫停即時同步':
+              '尚未取得即時行情'}</span>
+            {chartInfo?.fetched_at_ms&&<span>最近請求：{new Date(chartInfo.fetched_at_ms).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false})}</span>}
+            {chartInfo?.last_price_ts&&<span>K 線起始時間：{new Date(chartInfo.last_price_ts).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false})}（台北）</span>}
+            <span>{chartInfo?.partial_candle?'含尚未收盤 K 線':'最後一根為已收盤 K 線'}</span>
+            {chartInfo?.live_warning&&<span className="market-sync-warning">{chartInfo.live_warning}</span>}
+            {chartInfo&&!chartInfo.exact_timeframe&&<span className="market-sync-warning">顯示為聚合 K 線，非原生週期</span>}
+            <div className="sync-pager">
+              <button type="button" className="outline-button slim" disabled={!candles.length||chartBusy||
+                !chartInfo||chartInfo.view_start_ms<=new Date(config.data.start).getTime()}
+                onClick={()=>setChartPageEnd(candles[0].ts)}>← 更早 K 線</button>
+              <button type="button" className="outline-button slim" disabled={chartPageEnd===null}
+                onClick={()=>setChartPageEnd(null)}>最新 K 線 →</button>
+            </div>
+          </div>}
           {chartError&&<Message tone="bad"><strong>行情載入失敗：</strong> {chartError}<button className="outline-button slim"
-            onClick={()=>loadChart(config,true)}>重試抓取真實行情</button></Message>}
+            onClick={()=>loadChart(config,true,false,chartPageEnd)}>重試抓取真實行情</button></Message>}
           <CandleChart bars={candles} fills={result?.fills||[]} label={config.data.symbol}
-            loading={busy||chartBusy} onReload={isPrivate?()=>loadChart(config,true):undefined}/>
+            loading={busy||chartBusy} onReload={isPrivate?()=>loadChart(config,true,false,chartPageEnd):undefined}/>
           <div className="panel editor-panel"><div className="panel-head"><div><div className="eyebrow">STRATEGY CODE</div><h2>策略編輯器 <Badge tone="blue">PINE SUBSET</Badge></h2></div><div className="toolbar"><button className="quiet-button" onClick={()=>{updateStrategy({type:'pine',code:samplePine});setSelectedStrategy('')}}><RefreshCw size={14}/> 載入範例</button><button className="quiet-button" onClick={()=>fileInput.current?.click()}><FileUp size={14}/> 匯入 .pine</button><button className="quiet-button" onClick={saveStrategy} disabled={!isPrivate||strategiesBusy}><Save size={14}/> 儲存策略</button><button className="icon-button" onClick={()=>setExpandEditor(x=>!x)} aria-label="收合策略編輯器">{expandEditor?<ChevronDown size={16}/>:<ChevronRight size={16}/>}</button></div></div>
             <input hidden ref={fileInput} type="file" accept=".pine,.txt" onChange={async e=>{const f=e.target.files?.[0];if(f){if(f.size>12000)setError('Pine 檔案超過 12 KB，現有策略子集無法載入');else{updateStrategy({type:'pine',code:await f.text()});setNotice('Pine 檔案已載入編輯器')}e.target.value=''}}}/>
             {expandEditor&&<><div className="editor-header"><input aria-label="策略名稱" value={strategyName} onChange={e=>setStrategyName(e.target.value)} placeholder="策略名稱"/><span>pine · v5/v6 相容子集</span></div>

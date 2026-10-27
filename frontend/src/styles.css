@@ -38,3 +38,10 @@
 .market-venues .time-chip{min-width:70px;height:31px;border:1px solid #32475b;background:#132536;border-radius:6px;color:#a6bbce;padding:0 10px}
 .market-venues .time-chip.active{background:#20554b;color:#65e0bb;border-color:#3d9a82}
 @media(max-width:650px){.market-venues .time-chip{flex:1 1 auto;min-width:70px}}
+
+.market-sync{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:10px 13px;background:#0e202c;border:1px solid #29485b;border-radius:8px;color:#adc3d5;font-size:11px;line-height:1.6}
+.market-sync .sync-light{display:inline-block;width:9px;height:9px;flex:none;border-radius:50%;background:#e0b45a}
+.market-sync .sync-light.on{background:#38cba1;box-shadow:0 0 0 3px #38cba11f}
+.market-sync-warning{color:#f1ba8c}
+.sync-pager{display:flex;gap:7px;flex-wrap:wrap;margin-left:auto}
+@media(max-width:680px){.sync-pager{width:100%;margin-left:0}.sync-pager>*{flex:1}}
